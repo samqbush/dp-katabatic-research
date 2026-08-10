@@ -161,3 +161,14 @@ console.log(`\nwritten ${written}, skipped ${skipped}`);
 console.log(`archive now holds ${total[0].n} rows across ${total[0].days} mornings`);
 
 await closePool();
+
+// A run that captures nothing must FAIL, not pass quietly. Per §4.2 a morning that is not
+// captured is gone for good, so a silently green no-op is the worst possible outcome: it looks
+// like the archive is accruing when it is not, and the gap is only discovered a season later.
+if (written === 0) {
+  console.error(
+    '\n❌ Nothing was captured. This is a failure, not a quiet skip — the morning is unrecoverable.\n' +
+    '   If this fired before the 00Z run published (~00:50 UTC), re-run it; otherwise investigate.',
+  );
+  process.exit(1);
+}
