@@ -1,0 +1,31 @@
+{
+  "name": "dp-katabatic-research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Research archive and analysis for morning katabatic wind at Soda Lakes, Colorado. Nothing here ships to a phone.",
+  "scripts": {
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test-timezone": "node scripts/test-timezone-independence.mjs",
+    "test-timezone:all": "for Z in America/Denver America/Chicago Asia/Tokyo Europe/London UTC Pacific/Auckland Pacific/Midway; do TZ=$Z node scripts/test-timezone-independence.mjs || exit 1; done",
+    "test-dst": "node scripts/test-archive-store-dst.mjs",
+    "check": "npm run test-timezone:all && npm run test-dst && npm test && npx yaml-lint .github/workflows/",
+    "db:schema": "node scripts/db/apply-schema.mjs",
+    "archive:ecowitt": "node scripts/archive-ecowitt.mjs",
+    "archive:holfuy": "node scripts/archive-holfuy.mjs",
+    "archive:forecast": "node scripts/archive-hrrr-forecast.mjs",
+    "archive:backup": "node scripts/backup-archive.mjs",
+    "refresh": "node scripts/katabatic-refresh.mjs",
+    "backtest": "node scripts/backtest-katabatic.mjs",
+    "score": "node scripts/score-backtest.mjs"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "yaml-lint": "^1.7.0"
+  }
+}

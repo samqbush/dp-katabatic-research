@@ -1,0 +1,57 @@
+{
+  "skill_name": "dp-katabatic-check",
+  "evals": [
+    {
+      "id": 0,
+      "name": "soda-go-no-go-with-threshold",
+      "prompt": "Can you check the dp soda meter and tell me if this is lining up for a katabatic wind event? I'm about to head to the lake and need it to stay over 15 mph for my session in the next hour.",
+      "expected_output": "Runs the bundled katabatic-check script against DP Soda Lakes with threshold 15, leads with a clear go/no-go verdict, shows recent readings, reasons about direction lock / build shape / neighbor contrast / sunrise, and assesses the specific session window. Must not fabricate readings.",
+      "files": [],
+      "assertions": [
+        "Reports actual wind speed numbers pulled from the live Ecowitt meter (not invented or forecast values)",
+        "States a clear go / no-go verdict rather than hedging without a recommendation",
+        "Discusses wind direction as part of the katabatic reasoning, not just speed",
+        "References the user's 15 mph threshold explicitly in the assessment",
+        "Cross-checks or mentions at least one other station, or sunrise timing, as supporting context"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "casual-should-i-go",
+      "prompt": "morning - is it worth driving out to soda right now or am i gonna get skunked",
+      "expected_output": "Recognizes this as a katabatic/conditions check despite casual phrasing and no explicit threshold. Pulls live meter data, gives a direct answer about whether to drive out.",
+      "files": [],
+      "assertions": [
+        "Pulls live meter data rather than answering from general weather knowledge",
+        "Gives a direct recommendation about whether the drive is worth it",
+        "Response is concise and leads with the answer rather than preamble"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "alternate-station-standley",
+      "prompt": "what's standley west looking like this morning? thinking about a session there instead of soda, I need at least 12 mph",
+      "expected_output": "Runs the check against DP Standley West (not Soda) with threshold 12, and gives a verdict for that station.",
+      "files": [],
+      "assertions": [
+        "Queries the DP Standley West station specifically rather than defaulting to Soda Lakes",
+        "Uses or references the user's 12 mph threshold rather than a default 15",
+        "Gives a verdict specific to Standley West"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "marginal-at-threshold-reads-over-n-trajectory",
+      "prompt": "Check the soda meter \u2014 is it going to hold over 15 for a 6 to 7 session this morning?",
+      "expected_output": "Runs the bundled script with threshold 15. If the sustained average is within ~1.5 mph of the 15 mph threshold, the response must not rely on the script's BUILDING/HOLDING/DECAYING word alone \u2014 it must read the over-N percentage trajectory across recent slices and say plainly whether the share of readings above threshold is rising or falling. A declining over-N must be described as fading even when the trend word reads HOLDING. Per the asymmetric cost function, a declining over-N must sharpen the advice (arrive at gate-open, expect the tail, don't count on the back half) rather than suppress the go. Must not fabricate readings.",
+      "files": [],
+      "assertions": [
+        "Cites the over-N / percent-above-threshold figure, not only the average speed and the trend word",
+        "If the average sits within roughly 1.5 mph of the threshold, explicitly characterizes the event as marginal rather than implying comfort",
+        "Does not treat a HOLDING trend label as proof the event is stable when the over-N percentage is declining",
+        "Still gives an actionable go/no-go rather than suppressing the morning purely because the event is marginal",
+        "Assesses the session window against sunrise and the seasonal park gate hour"
+      ]
+    }
+  ]
+}

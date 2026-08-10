@@ -1,0 +1,2035 @@
+# Morning Katabatic Prediction — Research Plan (Soda Lakes)
+
+**Status:** Research plan. Almost nothing here is built — the exceptions are marked 🔗 SHIPPED.
+**Scope:** Soda Lakes, morning drainage-wind events only. Afternoon/thermal wind is a
+different physical problem and is tracked separately in the `wind-guru` project.
+
+### Read this before anything else
+
+**The goal is to sleep in on dead mornings.** Not to measure wind, not to be a second opinion at
+5:30 — to remove the wake-up when it is going to be wasted. §1 and §3 argued the opposite for
+months and are corrected in place; if you find a passage claiming the wake-up is cheap or that the
+night-before question is low-value, it is stale, and it is wrong.
+
+**The user wakes 30 minutes before the park gate opens** (§1.1) — 5:30 in summer, 6:30 in
+Mar/Apr/Oct. Never a fixed 5:30. Any analysis using a fixed clock time is measuring someone else.
+
+**The binding constraint is trust, not accuracy** (§3). He threw away a year of previous katabatic
+work because it was bad, and will wake at gate−30 for at least another year no matter what this
+document concludes. **The daily log accumulating in calendar time is the deliverable**; a better
+model that nobody has watched being right is not.
+
+**The season is March–October** (§4.5b). Nov–Feb is cold-blocked, not merely gate-blocked.
+
+### 🔗 SHIPPED markers — read this before editing a marked number
+
+A few findings have graduated out of research and are now **operating knowledge duplicated in
+`.github/skills/dp-katabatic-check/SKILL.md`** (and in one case its bundled script). They are
+tagged 🔗 SHIPPED at the section that owns them.
+
+**This document remains the source of truth. If you revise a 🔗 SHIPPED number here, you must
+update SKILL.md in the same change, or the morning call will silently run on a stale value.**
+
+Currently mirrored:
+
+| Finding | Owned by | Mirrored in |
+|---|---|---|
+| Bear Creek gate-hours table | §4.5 | SKILL.md → Step 3, "is the park even open?" |
+| Session ends median sunrise **+57 min** (n=14, 25th +3 / 75th +85) | §4.5 | SKILL.md → Step 3, "when does the wind end?" |
+| Winter shutdown, dark 2026-01-06 → 2026-02-28, annual | §4.2 | SKILL.md → Notes; also detected by `scripts/katabatic-check.mjs` |
+| Meter sits on the NW point of Big Soda | §4.2 | SKILL.md → Notes |
+| `DECAYING` threshold **±3.0 mph** | §5 / A.3 | `scripts/katabatic-check.mjs` |
+| Season is **Mar–Oct**; Nov–Feb cold-blocked, not just gate-blocked | §4.5b | SKILL.md → "The season: March–October" |
+| Wakes at **gate−30**, every riding day | §1.1 | SKILL.md → "When he is actually standing there: gate−30" |
+
+The reverse direction is deliberate and should stay that way: the skill carries **conclusions
+only**, never derivations. Appendix A is not mirrored and should not be — see its scope note.
+
+---
+
+## 1. The problem
+
+Current workflow: **wake 30 minutes before the park gate opens** — always, in every month —
+manually check the Soda meter, go if it reads 15+ mph, otherwise go back to bed. Recently
+extended with a second step: asking the assistant for a read on whether it will *hold*.
+
+**The wake-up time is not 5:30. It tracks the gate** (§1.1). Earlier drafts of this document
+hard-coded 5:30 and that error propagated into how the backtest was scored (§7.1) and into
+advice given back to the user. Gate−30 is the only call time that describes real behaviour.
+
+> ⚠️ **CORRECTED 2026-08-10.** This section previously read: *"Note what is not the goal:
+> eliminating the wake-up. The wake-up is cheap; a missed session is not."* **That is the
+> opposite of the user's actual goal**, stated twice and unambiguously:
+>
+> > *"The whole point of the project is to be able to sleep in."*
+>
+> > *"If I'm just going to wake up at 5:30 every day I wouldn't be wasting tokens having you help
+> > me do all this research."* (§10)
+>
+> **Eliminating the wake-up on dead mornings IS the goal.** The wake-up is the primary cost being
+> optimised, not a rounding error. Every section written against the old framing is suspect —
+> see §3 and §10.1 in particular.
+
+Two distinct questions hide inside "is it worth going," and they need different solutions:
+
+| Question | When asked | Nature |
+|---|---|---|
+| Q1. Is it blowing right now? | gate−30 | **Observation.** No forecasting required — already solved by looking. |
+| Q2. Will it hold through my session? | gate−30 | Short-range decay estimate. |
+| Q3. **Do I need to be awake at all?** | Night before / while asleep | True forecasting problem. **The one that pays.** |
+
+> ⚠️ **CORRECTED 2026-08-10.** This previously read: *"Q2 is where the value is... Q3 saves only
+> a cheap wake-up."* Wrong, per §1's correction. **Q3 is where the value is** — it is the only
+> question whose answer lets the user sleep. Q1 is free and Q2 improves a decision he is already
+> awake to make.
+>
+> The claim that "this project failed by attacking Q3 first" is also a misreading. Q3 is hard, and
+> attacking it *badly* failed. That is an argument for doing it carefully, not for redirecting to
+> the easy question and declaring the hard one low-value.
+
+### 1.1 The wake-up schedule, stated once so it stops being guessed
+
+The user wakes **30 minutes before the park gate opens**, every riding day:
+
+| Months | Gate | Wake |
+|---|---|---|
+| May–Sep | 6:00 | **5:30** |
+| Mar, Apr, Oct | 7:00 | **6:30** |
+| Nov–Feb | 8:00 | *(does not ride — §4.5b)* |
+
+Three consequences, all of which correct things written elsewhere in this document:
+
+1. **Lead time is a constant ~30 minutes across the whole season.** He is always in §7.1's
+   "0–60 min ahead" bucket (**27.8% missed**) and **never** in the 90+ minute bucket (50% missed).
+2. **§7.1's cool-season degradation is an artifact of the experiment, not a fact about his
+   mornings.** That backtest scored a *fixed* 06:30 call, which against an 8:00 winter gate is a
+   90-minute-ahead call nobody would ever make. §7.1 says so itself — *"season is a proxy for lead
+   time"* — but the conclusion has been read seasonally ever since.
+3. **The rule has never been scored at gate−30 uniformly**, which is the only call time that
+   describes what actually happens. Every headline number in §7.1 is for a call he does not make.
+
+- [ ] Re-score the backtest at a gate-relative call time (gate−30) instead of fixed clock times.
+      Cheap, uses existing data, and it is the number that describes his actual mornings.
+
+---
+
+## 2. Key reframing: the cost function is asymmetric
+
+- **False positive** (told to go, conditions junk): costs ~5 minutes and a return to bed —
+  *given that he is already awake.* Once a system decides whether he wakes at all, a false
+  positive costs a wasted wake-up, which is the thing he is trying to eliminate (§1). Not free.
+- **False negative** (told to sleep, conditions epic): costs an entire session.
+
+These are not remotely equal, and it changes the target. We are not building a wind-speed
+predictor. Any future night-before tool should be a **"confidently dead" filter** that stays
+silent unless it is highly confident the morning is hopeless.
+
+Practical consequence: tune for **high recall on good mornings**, accept many false alarms.
+A large share of nights are obviously dead (cloud deck, warm, wrong flow aloft); eliminating
+only those is high-confidence and low-risk. Chasing marginal nights is where this project
+died last time.
+
+**Even then, every output is advisory.** The human makes the call and verifies on site. See §3.
+
+---
+
+## 3. Tier 0 — The manual verification loop (do NOT automate this yet)
+
+**Decision: we are not building an automated alarm — but the reason recorded here was wrong,
+and the right reason is stronger.** Corrected 2026-08-10:
+
+- ❌ ~~The drive is ~5 minutes, so a false positive costs nearly nothing.~~ True but irrelevant.
+  The expensive thing is **being awake at 5:30 on a dead morning**, not the drive.
+- ❌ ~~Automating the decision buys almost nothing.~~ **It buys the entire point of the project**
+  (§1). This sentence is the single most misleading line in the document's history.
+- ✅ **A tool with no established track record cannot be trusted to decide whether you sleep.**
+  This is the real reason, it is the user's own, and it has nothing to do with cost asymmetry:
+
+  > *"The reason why a wake-up alarm is never going to happen is because I don't trust you or the
+  > data yet. So I will have to wake up 30 min before the gate opens for at least another year
+  > until we figure this out. I already wasted last year on shitty katabatic wind projects that I
+  > threw away because they were so bad."*
+
+**This reframes the binding constraint for the whole project.** It is not accuracy, and it is not
+which model to use. It is **earned trust**, and trust is bought with a visible track record over
+time — which no amount of backtesting substitutes for, because the previous attempt also looked
+fine right up until it was thrown away.
+
+Three things follow, and they should govern sequencing more than any measured rate in this
+document:
+
+1. **Assume ~1 year of gate−30 wake-ups regardless of what gets built.** Any plan whose payoff
+   requires the user to trust an alarm sooner than that is not a plan.
+2. **The daily prediction log is the product**, not a research byproduct (§3.2). It is the only
+   artifact that accumulates trust, and it only accumulates in calendar time.
+3. **Prefer being visibly right in public over being cleverer in private.** A rule that logs a
+   call every morning and can be audited a year later beats a better rule that nobody can check.
+
+**The failure mode to avoid is precise and has already happened once to this user:** a system that
+performs well in backtest, is never validated live, and gets thrown away. §7 rule 6 exists for
+this. So does this section.
+
+Reality check on the current evidence: the skill has made exactly **one** real morning call
+(2026-07-30, "go", verified at 16.0 mph average for the 6am hour). One correct call is not
+evidence of skill. It is n=1.
+
+### 3.1 The loop is the validation harness
+
+> ⚠️ **SUPERSEDED 2026-07-31 — this section's central claim was wrong.** Read §3.4 before acting
+> on anything below. The manual loop is *not* the only source of labels, and treating it as such
+> would have cost a month of waiting for data that already existed.
+
+The existing manual workflow is not a limitation to engineer away — it is the **only source
+of labeled prediction/outcome pairs this project has ever had**:
+
+1. Wake at 5:30, check the Soda meter
+2. Ask the assistant for a read on whether it will hold
+3. **Drive out and observe what actually happened**
+4. Record both the prediction and the outcome
+
+Step 3 is the irreplaceable part. Automating steps 1–2 away would destroy the data source
+that any future automation would need in order to be trustworthy.
+
+### 3.4 Correction — the outcome is machine-observable
+
+**The label is computable from meter history, so outcomes do not need a human at all.**
+
+This was forced by a constraint the earlier drafts never accounted for: the user travels for
+work and this is a side hobby project. He will not hand-maintain a dataset, and any design that
+requires it is dead on arrival. Asked directly, he was unambiguous:
+
+> *"I am not going to manually verify every day for 30 days… I am not going to manually add data
+> all the time."*
+
+That constraint turned out to be liberating rather than limiting:
+
+1. **Outcomes auto-fill.** "Did it sustain ≥15 mph for ≥30 continuous minutes after gate-open"
+   is a pure function of archived readings. §5 already conceded Tier 1 *"needs only historical
+   meter data"* — the same is true of the label itself.
+2. **§3.3's 30-morning gate is satisfiable today.** ~420 station-days of Soda history already
+   exist. We replay them (§7.1) instead of waiting a month for 30 new ones.
+3. **The prediction log is no longer time-sensitive.** The claim that it "accumulates only in
+   real time — it cannot be backfilled" (§9 item 2) is false for every machine-derived column.
+
+**What genuinely cannot be auto-derived** is the nuance the meter cannot see: whether it was
+*actually* rideable — chop, launch-relative direction, lake ice, gear mismatch. The dawn patrol
+group chat was considered as a proxy and rejected by the user as too noisy to be worth wiring
+up. So this stays an *optional, opportunistic* note (`human_note` in the log) and **nothing in
+the pipeline may block on it.**
+
+**What this does NOT change:** the rejection of an automated alarm at the top of §3 still
+stands, for exactly the reasons given there. Automating *scoring* is not automating the
+*decision*. The human still makes the call.
+
+
+### 3.2 Prediction log
+
+> 🔗 **SHIPPED** — schema in `scripts/lib/prediction-log.mjs`, written to
+> `research/prediction-log.csv` by `scripts/backtest-katabatic.mjs`. Populated by machine, not
+> by hand (§3.4).
+
+**Research tasks:**
+- [x] ~~Define a prediction log format~~ → `LOG_COLUMNS` in `scripts/lib/prediction-log.mjs`.
+      Carries the call-time features, the verdict, and the auto-derived outcome.
+- [x] ~~Decide where it lives~~ → `research/prediction-log.csv`, committed.
+- [x] ~~Have the skill emit a copy-pasteable log line~~ → superseded by something better: the
+      `--log` flag appends the row directly, and the weekly refresh fills the outcome.
+- [x] ~~Record outcomes even on mornings the call was "don't bother"~~ → now automatic, and this
+      turned out to be the single biggest win. These rows were called *"the most valuable in the
+      dataset"* because they are the only way to detect false negatives, yet they were precisely
+      the ones a human would never remember to record. The machine records every morning
+      regardless of what the call was.
+
+One field could not be automated: `human_note`, for whether it was *actually* rideable. It is
+optional and nothing depends on it (§3.4).
+
+### 3.3 Exit criteria
+
+> ⚠️ **The 30-morning wait no longer applies** — see §3.4. These questions are answerable now,
+> from ~420 archived station-days, and §7.1 answers them. The criteria themselves are unchanged
+> and still the right ones; only the assumption that they required a month of waiting was wrong.
+
+Only after roughly **30+ logged mornings** does it become possible to ask:
+
+- What is the hit rate on "go" calls?
+- Has it ever produced a false negative, and what did that cost?
+- Does it beat "always go and look"?
+
+Automation becomes a legitimate conversation **only** if the answers justify it. Until then,
+the assistant's job is to be a second opinion on a decision the human is still making.
+
+---
+
+## 4. Data inventory — VERIFIED findings
+
+Probed the Ecowitt API against DP Soda Lakes (MAC in `ECOWITT_MAC_DP_SODA_LAKES`) on 2026-07-31.
+These are measured, not assumed:
+
+### 4.1 Resolution decays with age — but this costs us almost nothing
+
+| Age | Points per day | Effective interval |
+|---|---|---|
+| 0–~90 days | 288 | **5 minutes** |
+| >~90 days | 48 | **30 minutes** |
+
+Confirmed by inspecting timestamps directly: 2026-07-15 returns 04:00, 04:05, 04:10…
+while 2025-10-15 returns 04:00, 04:30, 05:00…
+
+**The 30-minute points are true averages of the underlying 5-minute data, not samples.**
+Verified by requesting the same day at both `cycle_type=5min` and `cycle_type=30min` and
+comparing: every 30-minute value matched the mean of its six 5-minute values to within
+0.02 mph (8/8 rows). Sampling would have been badly lossy — the 04:00 instantaneous
+reading was 12.1 mph against a true bucket mean of 15.1 — but averaging preserves exactly
+the quantity we score on.
+
+**Decision-equivalence test.** Across 30 recent mornings, compare the go/no-go call from
+30-minute data (mean of the 6–7am hour ≥ 15 mph) against 5-minute ground truth (was ≥15
+for the majority of the hour):
+
+> **29 / 30 mornings agree (97%).** The single mismatch was a boundary case: 14.4 mph mean,
+> exactly 50% of samples above threshold — a morning that was ambiguous at any resolution.
+
+This is expected rather than lucky: the 6–7am mean computed from 30-minute averages is
+*arithmetically identical* to the one computed from 5-minute data, because the coarse points
+are averages. What 30-minute data loses is only sub-30-minute structure — lull depth and
+gust factor. Median peak-to-lull spread inside the 6–7 hour is **5.6 mph**, so that structure
+is real, but it does not change the call.
+
+**Conclusion: 30-minute resolution is sufficient for the historical archive.** Preserve
+5-minute where it is free (it is the live feed's native resolution anyway, and costs nothing
+to store), but this is not a reason to rush.
+
+### 4.2 The winter gap is a deliberate seasonal shutdown, not an outage
+
+> 🔗 **SHIPPED** — the dark-window dates and the meter's physical placement are mirrored in
+> `SKILL.md` ("Notes on the data source") and the dark-window detection lives in
+> `scripts/katabatic-check.mjs`. Revise them together.
+
+Monthly probe of the 15th, points/day:
+
+```
+2026-07: 288   2026-06: 288   2026-05: 288   2026-04:  48
+2026-03:  48   2026-02:   0   2026-01:   0   2025-12:  48
+2025-11:  48   2025-10:  48   2025-09:  48   2025-08:  48
+2025-07:   6   2025-06:   0   (device created 2025-06-09)
+```
+
+Day-by-day probe across 2025-11-01 → 2026-05-10 (191 days, retried to separate genuine
+empty responses from API errors) pins the boundaries precisely:
+
+| Month | Days with data | Median pts/day |
+|---|---|---|
+| 2025-11 | 29 / 30 | 48 |
+| 2025-12 | 30 / 30 | 48 |
+| **2026-01** | **3 / 29** | dark from Jan 6 |
+| **2026-02** | **0 / 27** | dark all month |
+| 2026-03 | 30 / 30 | 48 |
+| 2026-04 | 28 / 28 | 48 |
+| 2026-05 | 8 / 8 | 288 |
+
+> **Dark: 2026-01-06 → 2026-02-28 (~54 days). Data resumes 2026-03-01.**
+
+**Why.** The meter sits on the northwest point of Big Soda, between Big Soda and Little Soda,
+and it uses the ski shop's wifi. The shop shuts down once Little Soda freezes over, so the
+meter goes dark for the winter. **This is deliberate, recurring, and will happen every year.**
+
+Three consequences that matter more than the gap itself:
+
+1. **It is not recoverable from anywhere.** The data was never transmitted, so there is no
+   archive, no backfill, no alternate source. Stop looking. (This closes an earlier open
+   question that assumed a station fault might be recoverable.)
+2. **Absence of data must never be read as absence of wind.** Any archiver or model has to
+   treat the winter gap as *unobserved*, not as calm. Silently averaging zeros into a winter
+   baseline would produce exactly the kind of confidently-wrong output this project must avoid.
+   The archiver must also not alert on it as a failure.
+3. **The shutdown/restart dates are a free freeze/thaw proxy.** The meter going dark is a
+   reasonable proxy for "Little Soda has frozen," and its return for the thaw. That partially
+   answers the lake-ice open question in §4.5 without any new data source.
+
+**Decision impact is small.** An earlier draft called this "the most damaging possible place
+to lose data" because Dec–Feb is peak katabatic season. That was wrong — it ignored park
+access (§4.5). The gate does not open until 8 a.m. in Nov–Feb, and by 8 a.m. in Dec/Jan the
+event is reliably over, so those mornings are unrideable regardless of what the wind did.
+
+**And crucially, November and December are fully covered** (29/30 and 30/30 days). The §4.5
+hypothesis that November may still be sessionable is therefore **testable right now from
+existing history** — it does not need a season of new data collection.
+
+- [ ] Test the November hypothesis against Nov–Dec 2025 data. Cheapest open item on this list.
+
+### 4.3 Response size is capped — and so is the call rate
+
+A 7-day request at `5min` returned 336 points, not 2016. A 31-day request at `30min`
+returned 180, not 1488. Archive pulls must be **chunked per-day** and rate-limited.
+
+`cycle_type` accepts `5min` / `30min` / `auto`; `240min` errors with 40015.
+
+> 🔗 **SHIPPED** — both caps are handled in `scripts/archive-ecowitt.mjs`.
+
+**There is also an undocumented call-rate cap** (discovered 2026-07-31, during the first full
+backfill). At ~3 requests/second the API began returning:
+
+```
+The number of interface accesses reached the upper limit
+```
+
+Two things make this more dangerous than it looks:
+
+1. **It arrives as `code != 0` in a 200 response, not an HTTP 429.** A naive client reads the
+   body, finds no wind data, and concludes the station reported nothing — which would then be
+   archived as absence. Given §4.2, that is the exact failure this project must never make.
+   `isRateLimitMessage()` in `scripts/lib/ecowitt.mjs` separates the two, and rate-limited days
+   are **not written to the archive at all** so a later re-run retries them.
+2. **Retrying with exponential backoff does not help** — a rate cap needs a real cooldown, and
+   burning three fast retries against it just deepens the hole. The archiver waits ~65s, and if
+   still capped it stops cleanly; the archive is idempotent so a re-run resumes.
+
+Practical rate: **~1.2s between requests** completed a ~420-day station backfill without
+tripping the cap.
+
+### 4.3a Boulder Res has almost no history
+
+Device creation times, read from `device/list` on 2026-07-31:
+
+| Station | Created | Usable history |
+|---|---|---|
+| DP Standley West | 2025-05-19 | ~14 months |
+| DP Soda Lakes | 2025-06-09 | ~14 months |
+| **DP Boulder Res** | **2026-07-14** | **~2 weeks** |
+
+This materially weakens the station-correlation question in §8 — with a fortnight of overlap,
+Boulder Res cannot support any seasonal claim, and the neighbour-contrast signal in `SKILL.md`
+effectively rests on Standley West alone for anything before July 2026. Any correlation result
+involving Boulder Res should be reported with its `n` attached and treated as provisional.
+
+### 4.4 Archiving is worth doing, but it is not an emergency
+
+The earlier draft flagged this as ⚠️ time-critical, on the grounds that each day of delay
+permanently destroys 5-minute fine structure. Given §4.1, **that urgency was overstated** —
+the surviving 30-minute averages answer the go/no-go question with 97% agreement.
+
+Two things remain true and justify doing it soon anyway, just without panic:
+
+- Ecowitt is the single point of failure. The Jan–Feb gap is proof the data is not
+  guaranteed to exist later. A local copy is insurance against loss, not resolution decay.
+- Today (2026-07-31) the 90-day window happens to cover ~May 2 onward, which is the whole
+  current season at 5-minute resolution. Grabbing it now is nearly free.
+
+- [ ] Build a per-day chunked archiver. Backfill everything available, then append daily.
+      Store whatever resolution the API returns; do not treat 30-minute rows as inferior.
+
+### 4.5 Park access is a hard constraint — and it defines the season
+
+> 🔗 **SHIPPED** — the gate-hours table and the "+57 min after sunrise" session close are
+> mirrored in `SKILL.md` (Step 3). Both are load-bearing for the live go/no-go call; revise
+> them together. The seasonal-window table below and the shoulder-season hypotheses are
+> **not** shipped and should stay research until logged mornings test them.
+
+Verified against the City of Lakewood site (`lakewoodco.gov/Parks-Rec/Bear-Creek-Lake-Park`,
+retrieved 2026-07-31 — note the site 403s automated fetchers, so it needs a real browser):
+
+| Months | Gate hours |
+|---|---|
+| May–Sep | **6 a.m.** – 10 p.m. |
+| Mar, Apr, Oct | **7 a.m.** – 8 p.m. |
+| Nov–Feb | **8 a.m.** – 6 p.m. |
+
+No amount of wind matters before the gate opens. This is a hard filter that sits in front of
+every prediction, and any tool built here must apply it first.
+
+**How long does the event actually last?** Measured, rather than assumed. Across 72 days of
+history, taking mornings where the 30-minute rolling mean sustained ≥15 mph (n=14), the time
+the session *ends* relative to sunrise:
+
+| | min | 25th | **median** | 75th | max |
+|---|---|---|---|---|---|
+| Session end vs. sunrise | −128 min | +3 min | **+57 min** | +85 min | +102 min |
+
+So the rideable window typically closes about **an hour after sunrise**, consistent with
+surface heating breaking the nocturnal inversion.
+
+**The counterintuitive part.** Gate time and sunrise both shift seasonally, and they largely
+cancel. Combining the gate table with a sunrise+57min close:
+
+| Month | Gate | Sunrise | Window closes | Usable |
+|---|---|---|---|---|
+| Jan | 8:00 | 7:19 | 8:16 | ~16 min — effectively dead |
+| Feb | 8:00 | 6:52 | 7:49 | **gate opens after it's over** |
+| Mar | 7:00 | 7:12 | 8:09 | ~69 min ✅ |
+| Apr | 7:00 | 6:23 | 7:20 | ~20 min — marginal |
+| May | 6:00 | 5:45 | 6:42 | ~42 min ✅ |
+| Jun | 6:00 | 5:32 | 6:29 | ~29 min — marginal |
+| Jul | 6:00 | 5:46 | 6:43 | ~43 min ✅ |
+| Aug | 6:00 | 6:14 | 7:11 | ~71 min ✅ |
+| Sep | 6:00 | 6:43 | 7:40 | **~100 min — best of the year** |
+| Oct | 7:00 | 7:11 | 8:08 | ~68 min ✅ |
+| Nov | 8:00 | 7:46 | 8:43 | ~43 min ✅ |
+| Dec | 8:00 | 7:14 | 8:11 | ~11 min — dead |
+
+Two things fall out of this that are worth testing rather than assuming:
+
+1. **September and October look like the best months**, not June. Late sunrise against an
+   unchanged gate hour buys a much longer window. June is one of the *worst* despite the 6
+   a.m. gate, because sunrise is at 5:32 and the wind is dying as you rig.
+2. **November may not be the end of the season.** An 8 a.m. gate sounds fatal, but sunrise
+   is 7:46, so the gate opens only 14 minutes after sunrise. The working assumption that
+   "November they go to 8 a.m. and the season is over" may be losing a usable month.
+
+**Caveats, stated plainly.** The +57 min figure is measured entirely from June–July mornings.
+Winter behaviour is unverified and could go either way: weaker sun and snow albedo may hold
+the inversion longer (extending the window), while a frozen or partly frozen lake and the
+practical realities of cold are separate blockers that have nothing to do with wind. Treat
+the shoulder-season rows as **hypotheses to test in the prediction log**, not conclusions.
+
+- [x] ~~Log a few Sep/Oct mornings against this table~~ → tested in bulk, §4.5a
+- [ ] Confirm whether lake ice or a separate watercraft season closes Nov–Mar independently.
+
+### 4.5a CONFIRMED — both shoulder-season predictions were right
+
+> 🔗 Measured 2026-07-31 over 311 gate-conditioned, resolution-checked archive days
+> (`scripts/lib/label.mjs`). This is the whole population, not a sample.
+
+| Month | n | Rideable | Rate | Blew, but gate was shut |
+|---|---|---|---|---|
+| Jan | 5 | 0 | 0% | 3 |
+| Mar | 31 | 14 | **45%** | 6 |
+| Apr | 30 | 9 | 30% | 5 |
+| May | 31 | 8 | 26% | 7 |
+| Jun | 30 | 1 | **3%** | 7 |
+| Jul | 32 | 5 | 16% | 7 |
+| Aug | 31 | 8 | 26% | 10 |
+| Sep | 30 | 15 | **50%** | 4 |
+| Oct | 31 | 13 | **42%** | 10 |
+| Nov | 29 | 8 | 28% | 10 |
+| Dec | 31 | 10 | 32% | 9 |
+
+**Prediction 1 — "September and October look like the best months, not June" — confirmed, and
+more strongly than predicted.** Sep 50% and Oct 42% against **June 3%**. June is not merely
+mediocre, it is the worst month in the entire dataset: one rideable morning in thirty. The
+mechanism proposed in §4.5 (sunrise at 5:32 versus a 6:00 gate — the wind is dying as you rig)
+is exactly right.
+
+**Prediction 2 — "November may not be the end of the season" — confirmed.** November 28% and
+December 32%, comparable to May (26%) and August (26%). **The working assumption that the
+season ends in November was costing roughly two months of rideable mornings per year.**
+
+The best three months are **Sep, Mar, Oct** — all shoulder months. The intuition that this is a
+summer sport is backwards at this site.
+
+**The real cost is the gate, not the weather.** The right-hand column counts mornings that blew
+≥15 mph for ≥30 min *before the gate opened* — 78 mornings across the archive, concentrated in
+Aug/Oct/Nov (10 each) and Dec (9). In November, 10 mornings were lost to the 8 a.m. gate against
+8 that were catchable: **more than half of November's katabatic events happen behind a locked
+gate.** Anyone with legitimate early access would roughly double the November season.
+
+Caveats that stand: winter rideability is a wind measurement only. Lake ice, a separate
+watercraft season, and plain cold are independent blockers this data cannot see. And the +57 min
+decay figure remains June–July-derived; the shoulder months may behave differently.
+
+**The biggest caveat, stated plainly: every month above has exactly ONE year behind it.**
+
+| Month | Year(s) contributing usable days |
+|---|---|
+| Mar, Apr, May | 2026 only |
+| Jun, Jul | 2026 only (2025 lost to 240-min downsampling, §4.3a) |
+| Aug, Sep, Oct, Nov, Dec | 2025 only |
+| Jan | 2026 only, and just 5 days (§4.2 shutdown) |
+| Feb | none |
+
+The station was created 2025-06-09, so no month has yet been observed twice. **These rates are
+one-year samples, not climatology.** A single unusual September or a single quiet June moves its
+number a long way. The rank ordering is a strong hint — Sep/Mar/Oct on top, June at the bottom,
+consistent with the sunrise-versus-gate mechanism in §4.5 — but treat any individual percentage
+as ±10 points until a second year lands. The archiver running daily is what fixes this; by
+late 2026 the autumn months will have two years and can be compared directly.
+
+### 4.5b The rider's actual season is narrower than the wind data (2026-08-10)
+
+§4.5a is a measurement of *wind*. It is not a measurement of *when the user will ride*, and the
+two were being conflated. Stated directly by the user:
+
+> *"November is usually too cold to actually go for dawn patrol. I have a very thick wetsuit, but
+> it isn't as fun when my hands freeze, so I'm not as motivated. The main season is when the gates
+> open at 6 or 7 am."*
+
+**The operative season is therefore the months the gate opens at 6 or 7 a.m. — March through
+October** (§4.5: Mar/Apr/Oct at 7 a.m., May–Sep at 6 a.m.). Nov–Feb is out on two independent
+grounds that happen to coincide: the 8 a.m. gate, and cold that removes the motivation regardless
+of wind.
+
+This changes how existing findings should be read:
+
+- **§4.5a's Nov 28% / Dec 32% are real wind and irrelevant in practice.** The conclusion that
+  "the season ends in November was costing two months of rideable mornings a year" is **withdrawn
+  as a recommendation** — those mornings are cold-blocked, not gate-blocked. The wind measurement
+  stands; the call to action does not.
+- **The §4.5a "blew behind a locked gate" column loses most of its force.** Its largest entries
+  are Nov (10) and Dec (9) — months that are off the table anyway. Early park access is worth far
+  less than §4.5a implied.
+- **Every aggregate rate in §7.1, §10 and §11 is diluted by months the user will not ride.**
+  Anything scored over the full archive is answering a slightly different question than the one
+  being asked. In-season scoring is the honest default from here on, and §13 reports both.
+
+Sample-size consequence, and it cuts the wrong way: restricting to Mar–Oct drops the archive from
+321 labelable mornings to **255**, and positives from 96 to **77**. §4.7's warning about a few
+dozen positives gets tighter, not looser. This is another argument against anything with many
+parameters.
+
+- [ ] Re-examine whether the *cold* boundary is really Nov, or whether late Oct / early Mar are
+      also motivation-limited. Water and air temperature are both archived; this is testable
+      rather than assumed, and the answer moves the usable season by weeks.
+
+### 4.6 Base rate: most mornings are not worth it
+
+Of 30 recent mornings with complete data, only **4 (~13%)** had a 6–7am mean at or above
+15 mph. Widening to "sustained ≥15 at any point in the 3–11am window" gives 14 of ~72 (~20%).
+
+This is the number any future tool has to beat. A predictor that says "no" every morning is
+already ~85% accurate, which is exactly why accuracy is the wrong metric here (§7) and why
+the asymmetric cost function in §2 matters so much.
+
+### 4.7 Realistic sample size
+
+The naive count is ~12 months minus the 2-month gap ≈ 300 mornings. The **useful** count is
+much smaller, because §4.5 rules out mornings the gate was shut and §4.6 shows most of the
+rest were flat:
+
+- Gate-accessible months (Mar–Nov, generously) ≈ **270 mornings/year**
+- Of those, roughly **13–20% have a real event** ≈ **35–55 positive examples per year**
+
+Positives are the scarce resource, and there are only a few dozen. That is enough for a
+handful of physically-motivated predictors with a couple of parameters each. It is emphatically
+**not** enough for a many-feature ML model — with seasonality, some calendar months contribute
+single-digit positives. This argues strongly for simple, interpretable rules over anything fancy,
+and for measuring skill on positives (recall) rather than overall accuracy.
+
+---
+
+## 5. Tier 1 — Q2, "will it hold?"
+
+> 🔗 **SHIPPED (partially)** — the **±3.0 mph `DECAYING` threshold** is live in
+> `scripts/katabatic-check.mjs`, and "direction rotation is not by itself decay" is stated in
+> `SKILL.md` (Step 2, "Direction lock"). Everything else in this section is still open.
+
+The old heuristic was "katabatic typically persists 45–90 minutes past sunrise." That has now
+been **replaced by a measurement** (§4.5): across 14 rideable mornings the sustained window
+closes a **median +57 min after sunrise** (25th +3, 75th +85). The rule of thumb was roughly
+right but the spread is wide, and the spread is the actionable part.
+
+**`DECAYING` threshold — fixed, and the physics and the data agree.** The script previously
+flagged decay on a ±1.5 mph swing. Poulos et al. (2007) predicts **1–3 m/s (2–7 mph)
+modulation on ~1-hour timescales as expected signal, not decay** (Appendix A.3).
+
+Independently, the measured **median peak-to-lull spread inside a single hour at this station
+is 5.6 mph** — squarely inside the MKI band, from data rather than literature. Two independent
+lines agreeing is about as much confidence as this project is going to get, so the threshold is
+now **±3.0 mph**.
+
+This bug also announced itself during analysis: a first attempt to measure "when does the event
+die," defined as the first drop below 60% of the pre-dawn peak, returned nonsense — most
+mornings appeared to die ~59 minutes *before* sunrise. That was routine modulation tripping
+exactly the kind of tight threshold the script was using. Good illustration of why the error
+direction matters: the tight band talks the user out of a session that is still running.
+
+Two further consequences from the same physics, both of which bear on how the check is written:
+
+- There is a **second, microscale variability band at O(1 minute)** from wave breaking aloft.
+  Any short-window trend computed on 5-minute data is partly sampling that band. Trend
+  detection needs a window comfortably longer than an hour, not three consecutive points.
+- A **wind-direction shift is not by itself evidence of decay.** On the Poulos case night the
+  BAO direction ran easterly → westerly at onset → N/NE by 0400 MST while the drainage was
+  still running (Appendix A.4). Direction rotation over the course of a morning is expected.
+
+**Research tasks:**
+- [x] ~~Extract decay-time distribution relative to sunrise~~ → §4.5, median +57 min (n=14)
+- [x] ~~Re-derive the `DECAYING` threshold empirically instead of guessing~~ → ±3.0 mph
+- [ ] Test whether decay time correlates with event strength, onset time, or date/season.
+      The +57 min figure is summer-only; seasonal dependence is the obvious next question and
+      matters directly for the shoulder-season hypothesis in §4.5.
+- [ ] Quantify: given it is X mph at 5:30, what is P(still ≥15 at 7:00)? This is directly
+      the question being asked, and it is answerable from the archive alone with no forecast
+
+Note this tier also needs **only historical meter data** — no external forecast source.
+
+---
+
+## 6. Tier 2 — Q3, the night-before call
+
+> ✅ **ANSWERED 2026-08-10 — see §10 before doing any work here.** The candidate predictors below
+> were tested against 320 labeled mornings. §6.1's headline predictor (700mb wind from the global
+> model) carries **no signal at all** — every band sits at the 30% base rate. The high-resolution
+> HRRR model *does* work and is the basis of the shipped plan. Do not re-run the global-model
+> experiment; it has been done and it failed.
+
+The only tier that is genuinely a forecasting problem, and the only one that needs external data.
+
+### 6.1 Candidate predictors
+
+Derived from `wind-guru/docs/katabatic-winds-reference.md`, summarised in Appendix A. Which
+of these matter is an **empirical question** — the point is to test, not assume:
+
+- Overnight cloud cover (radiative cooling is the driver)
+- Surface dewpoint / RH (dry air limits longwave trapping)
+- 700mb / 500mb wind direction and speed over the Divide — the canonical setup is
+  high SW / low NE giving W–NW flow aloft; Poulos case night showed 319° at 8.6 m/s
+- Froude number `U/(NH)`, H≈2000m — predicts whether upper slopes get wave-scoured
+- Surface pressure gradient (e.g. Grand Junction vs Denver)
+- Antecedent conditions / persistence
+
+### 6.2 A caution about the target
+
+Pure radiative drainage is **1–4 m/s (2–9 mph)**. The 15 mph threshold is well above that,
+meaning these sessions are **synoptically reinforced or gap-amplified events**, not pure
+drainage. Flow aloft is therefore likely a first-order predictor, not background detail —
+and it is data this repo currently has no access to at all.
+
+**But do not assume "more wind aloft → more wind at Soda."** The relationship is non-monotonic
+(Appendix A.2). Stronger flow over the Divide drives mountain waves that *weaken* the surface
+jet by deepening the katabatic layer and shrinking its temperature deficit, and at high enough
+Froude number scour the drainage off the slopes entirely. Any predictor built on 700mb wind
+speed should be allowed a **non-linear or bucketed** response rather than a single sign.
+
+**Chinook contamination is a live labelling risk.** A strong westerly downslope event is *not*
+katabatic (Appendix A.1) but will produce a 15+ mph westerly reading at Soda that the binary
+label in §7 happily counts as a positive. In the Nov–Mar window especially, some fraction of
+labelled positives may be chinook, which has entirely different predictors. Worth checking
+whether positives separate cleanly on temperature trend — katabatic events cool overnight,
+chinooks warm sharply.
+
+### 6.3 Data sources to research
+
+- [ ] **Open-Meteo archive API** — free, no key, historical reanalysis including pressure-level
+      winds. Best candidate for backfilling predictors against the label set
+- [ ] **Univ. of Wyoming sounding archive** — KDNR Denver 00Z/12Z, for real stability profiles
+      and Froude number
+- [ ] NOAA RAP/HRRR via NOMADS — higher resolution, heavier lift
+- [ ] Verify licensing/rate limits on each before depending on it
+
+---
+
+## 7. Validation methodology — the part that was missing last time
+
+The previous attempt most likely failed not because predictions were wrong, but because
+**there was no way to tell whether they were wrong.** Design against that from the start.
+
+**Non-negotiable rules:**
+
+1. **Define one binary label.** ~~Proposal: did Soda sustain ≥15 mph for ≥30 continuous minutes
+   between 05:00 and 08:00?~~ **Amended before use** — the fixed label is: *did Soda sustain
+   ≥15 mph for ≥30 continuous minutes, entirely after that month's gate-open time (§4.5) and
+   within sunrise+3h?* Two corrections to the original proposal, both load-bearing:
+   - **Gate at the front.** A fixed 05:00–08:00 window counts mornings the user physically
+     could not reach — Nov–Feb the gate does not open until 08:00. 78 archived mornings blew
+     well *before* the gate opened; scoring those as wins would flatter every downstream number.
+   - **sunrise+3h at the back.** Without a back edge the scan runs into the afternoon thermal,
+     a different physical phenomenon (tracked in the separate `wind-guru` project). This was
+     not theoretical: the first implementation reported a 46.4% base rate against §4.6's
+     documented ~13–20%, entirely from afternoon contamination.
+
+   Implemented once in `scripts/lib/label.mjs` and imported everywhere, so it cannot drift.
+   Unobserved days return `null`, never `false` (§4.2).
+2. **Establish the base rate first.** If good mornings are 40% of days, a 70%-accurate model
+   is barely better than guessing. Compute this before any modelling.
+3. **Beat two dumb baselines or ship nothing:**
+   - *Always say yes*
+   - *Same as yesterday* (persistence — surprisingly strong for wind)
+4. **Hold out a test set by time, not randomly.** Random splits leak across adjacent days.
+5. **Report asymmetric cost, not accuracy.** Track missed-session rate separately from
+   false-alarm rate. Accuracy alone hides the failure that actually matters.
+6. **Be willing to conclude it does not work.** A documented "does not beat persistence" is a
+   successful outcome of this research and prevents a third attempt at the same dead end.
+
+---
+
+## 7.1 RESULT — the backtest, and what it says we are actually predicting
+
+> 🔗 **SHIPPED** — `scripts/backtest-katabatic.mjs` (replay) and `scripts/score-backtest.mjs`
+> (scoring). Run date 2026-07-31. Reproduce with:
+> `node scripts/backtest-katabatic.mjs && node scripts/score-backtest.mjs --call-time 06:30`
+
+This section exists because of a direct challenge from the user, and it deserves to be recorded
+verbatim because it turned out to be correct:
+
+> *"I'm honestly not sure what we should do with this. I mean what are we actually predicting?
+> It seems to me you are just checking the dp-soda meter and looking at consistency, which is
+> what I am waking up and doing."*
+
+**He was right.** The measured answer is below.
+
+### Method
+
+The `SKILL.md` go/no-go logic was transcribed into a deterministic function
+(`scripts/lib/call-rule.mjs`) — **a transcription, not a fit**. No weight was tuned against the
+archive, so this first backtest is genuinely out-of-sample. It was replayed over 311 archived
+mornings at nine call times (05:00–07:00), scored against the gate-conditioned label (§7 rule 1,
+as amended), using **only readings available at the call time**. Leakage would make the rule look
+better than reality, so the barrier is a single function guarded by four explicit tests.
+
+### Headline (call time 06:30, n=309, base rate 29.8%)
+
+| Strategy | Missed sessions | False alarms | Precision |
+|---|---|---|---|
+| always go | **0.0%** | 100.0% | 29.8% |
+| never go | 100.0% | **0.0%** | n/a |
+| persistence (same as yesterday) | 57.3% | 24.2% | 42.2% |
+| **call rule v1** | **20.7%** | **29.5%** | **53.3%** |
+
+Against persistence the rule is dramatically better on the axis §2 says matters — 20.7% vs 57.3%
+missed — at a slightly worse false-alarm rate. Per §2's asymmetry (a miss costs a session, a
+false alarm costs a five-minute drive) the rule clearly dominates persistence in expected cost,
+even though the scorer's strict "better on both axes" test prints NO.
+
+*(Figures refreshed 2026-08-02 after the §9 timezone fix. They moved by ~0.2 pt from the values
+originally recorded here, which is just two extra archived days — the agreement is itself the
+evidence that this table was computed on a correctly Denver-pinned machine.)*
+
+### The finding that actually matters — skill collapses with lead time
+
+Restricting to rideable mornings and bucketing by how far ahead of the park gate the call was made:
+
+| Lead time from call to gate open | n | Missed sessions |
+|---|---|---|
+| Gate already open (call inside the window) | 37 | **0.0%** |
+| 0–60 min ahead | 36 | 27.8% |
+| 90+ min ahead | 18 | **50.0%** |
+
+Monotonic, and unambiguous:
+
+**The rule is a very good *measurement* and a poor *forecast*.** When it can observe the window
+it is judging, it misses nothing. Asked to project 90 minutes forward, it is a coin flip.
+
+That is the honest answer to *"what are we actually predicting?"* — **at present, largely
+nothing beyond what the meter already shows.** This is §1's own claim, now measured rather than
+asserted, and it confirms the user's suspicion exactly.
+
+### Same result, seen seasonally
+
+| Season | n | Rideable | Missed | False alarm |
+|---|---|---|---|---|
+| Warm (Apr–Sep) | 184 | 46 | **4.3%** | 30.4% |
+| Cool (Oct–Mar) | 123 | 45 | **37.8%** | 21.8% |
+
+This is not a different finding — it is the same one. Nov–Feb the gate opens at 08:00 (§4.5), so
+a 06:30 call is forced to forecast 90+ minutes ahead. Warm months open at 05:00–06:00, where the
+call sits inside the window. **Season is a proxy for lead time, not an independent effect.**
+
+> ⚠️ **And therefore this table does not describe the user's mornings at all (added 2026-08-10).**
+> He wakes at **gate−30 in every month** (§1.1), so his lead time is a constant ~30 minutes and he
+> is permanently in the "0–60 min ahead" row (27.8% missed). The cool-season row above exists only
+> because the backtest held the call time fixed at 06:30 — a call nobody makes in a month when the
+> gate opens at 08:00. **Do not quote the cool-season degradation as something he experiences.**
+> The backtest needs re-scoring at a gate-relative call time (§1.1 open item).
+
+Chinook contamination (§6.2) was checked first, per the label-poisoning concern: only 5 of 45
+cool-season positives show the >15 °F warming signature (2025-10-19, 2025-11-19, 2025-12-14,
+2026-03-07, 2026-03-12). Real, but far too few to explain 17 missed mornings. Lead time does.
+
+### What ships, and what does not
+
+Applying §7 rule 6 honestly — this is a **partial** pass, so only the part that earned it ships:
+
+- ✅ **Ship the call at zero/short lead** (gate open, or <60 min out). 0% missed at n=37.
+- ❌ **Do not ship a suppressing call at 90+ min lead.** At 50% missed it is worse than useless:
+  it would talk the user out of one session in two while sounding confident. Report *"too early
+  to tell — check again closer to gate open"* and let the meter decide.
+- ⏸️ **P(hold) (§5) is not yet justified.** It is the same 90-min-ahead extrapolation that just
+  failed. Revisit only with a signal that leads the wind rather than describing it.
+
+### What would actually add forecast skill
+
+> ✅ **Followed up in §10 (2026-08-10).** This paragraph was right that the ceiling is
+> informational rather than a weighting problem — but wrong about which external data helps.
+> Pressure-level flow from a global model added nothing; **grid resolution**, not variable choice,
+> was the binding constraint. See §10.2 and §10.3.
+
+The backtest says the ceiling on meter-only prediction has been reached — the remaining error is
+not in the rule's weights, it is in the absence of any variable that *leads* the surface wind.
+That means §5's Tier 2/3 (synoptic gradient, 700 mb flow, soil moisture) is no longer optional
+polish; it is the only route to answering Q2. Tuning `call-rule.mjs` further would be fitting
+noise on 91 positives (§4.7).
+
+---
+
+## 7.2 The label is slightly strict — a real morning says so
+
+Seeding the log with the only two independently-verified mornings this project has
+(`source=retrospective` in `research/prediction-log.csv`) produced an immediate and useful
+disagreement:
+
+| Date | Human call | Rule | Label | Sustained | Ground truth |
+|---|---|---|---|---|---|
+| 2026-07-30 | GO | GO | **false** | **25 min** | *"16.0 mph through the 6am hour, session was good"* |
+| 2026-07-31 | NO_GO | NO_GO | false | 0 min | Drove out at 6am, visually confirmed light, did not go out |
+
+The rule agreed with the human on both. But **2026-07-30 was a genuinely good session that the
+label scores as a negative**, purely because the sustained run was 25 minutes against a ≥30 min
+criterion.
+
+This is the first hard evidence for something §3.4 could only assert in the abstract: the meter
+label is a *proxy* for rideability, not rideability itself. Two implications:
+
+1. **The 29.6% base rate (§7.1) is probably an underestimate**, and the missed-session rates are
+   correspondingly pessimistic — some "misses" were mornings that were fine in practice.
+2. **Do not tune the 30-minute constant to fix this.** With one counter-example, changing it
+   would be fitting the label to a single anecdote — and §7 rule 1 exists precisely to stop the
+   label moving around mid-study. Leave it fixed, record the bias, and revisit only if several
+   more `human_note` rows point the same way.
+
+This is the intended use of the optional `human_note` column: it cannot be relied on to arrive,
+but when it does it calibrates the machine label. One row has already earned its place.
+
+---
+
+## 8. Open questions
+
+- [ ] Should the archive live in-app, or as a standalone job independent of app releases?
+      It must tolerate the annual winter shutdown (§4.2) without alerting or backfilling zeros.
+- [x] ~~**Do the shoulder months actually work?**~~ → **§4.5a: yes, emphatically.** Sep 50%,
+      Mar 45%, Oct 42%, Nov 28%, Dec 32% — against **June 3%**, the worst month in the archive.
+      Both §4.5 predictions confirmed. The "season ends in November" assumption was costing
+      roughly two months of rideable mornings a year.
+- [ ] **Does ridge-top flow at Lookout Mtn lead the valley jet?** → §8.1. Collection started
+      2026-07-25; n=8 as of 2026-08-02, nothing scored. Now accumulating automatically via
+      `scripts/analyze-lookout.mjs` into `research/lookout-log.csv`, scored head-to-head against
+      Soda's own overnight signal and gated from reporting AUC below n=30. This is the one
+      untested candidate for extending lead time past the ~60 min horizon where §7.1 shows the
+      rule collapsing. Not answerable before spring 2027.
+- [ ] Does lake ice close the shoulder season independently of gate hours? Partially answered
+      by §4.2 — the meter's winter shutdown tracks Little Soda freezing (dark Jan 6 – Feb 28),
+      which suggests open water through December and from about March.
+- [ ] Does the +57 min "session end vs. sunrise" figure hold outside June–July? It is measured
+      from summer only, and winter inversions may behave differently.
+- [x] ~~**Are Soda, Standley West and Boulder Res actually correlated?**~~ → **Weakly, and the
+      direction is the opposite of what `SKILL.md` implied.** Over 308 paired Soda/Standley days:
+      phi = 0.24, 74% raw agreement. Soda was rideable on 89 mornings, Standley on only 16, and
+      just 12 overlapped — so **87% of Soda's events are Soda-only**, which does confirm the
+      local-drainage-jet reading. **But the inference does not reverse.** Conditioning the other
+      way: P(Soda rideable | Standley blowing) = **75%** (12/16) versus P(Soda rideable |
+      Standley flat) = **26%** (77/292). A blowing neighbour nearly triples the odds — it is a
+      *positive* indicator, not a warning. `SKILL.md`'s "if everything is blowing, reconsider"
+      was inverted and has been corrected to affect only the expected decay, never the go/no-go.
+      Boulder Res remains untestable (n=18, zero shared positives — see §4.3a).
+- [x] ~~Do any labelled positives look like chinook rather than katabatic (Appendix A.1)?~~ →
+      **Present but minor.** Only 5 of 45 cool-season positives show the >15 °F warming
+      signature (2025-10-19, 2025-11-19, 2025-12-14, 2026-03-07, 2026-03-12). Checked *before*
+      scoring, to rule out label poisoning as the cause of the cool-season degradation in §7.1 —
+      it is not; lead time is.
+- [x] ~~After 30+ logged mornings: does the assistant's call beat "always drive out and look"?~~
+      → **§7.1: it depends entirely on lead time, and the honest answer is close to "convenience,
+      not predictor."** With the gate already open it misses 0% while avoiding ~71% of wasted
+      trips — genuinely useful. At 90+ minutes of lead it misses 50%, i.e. nothing. Answered from
+      311 replayed archive mornings rather than 30 manually logged ones (§3.4).
+
+Answered since first draft:
+- ~~Is the winter gap recoverable from another source?~~ → §4.2: no. It is a deliberate
+  seasonal wifi shutdown; the data was never transmitted and does not exist anywhere.
+- ~~What is the actual base rate of good mornings?~~ → §4.6: ~13% for a 6–7am session.
+  Superseded by the archive-wide measurement: **29.6%** of observed mornings under the fixed
+  gate-conditioned label (§7 rule 1). Higher than §4.6 because the label counts any 30-min
+  sustained run in the post-gate morning window, not just the 6–7am hour.
+- ~~Does the 90-day 5-minute window block winter modelling?~~ → §4.1: no. The 30-minute
+  archive is decision-equivalent (97% agreement).
+
+---
+
+## 8.1 Lookout Mtn (Holfuy 1295) — ridge-top hypothesis, NOT yet scored
+
+**Status: collection only. There is no Lookout-based rule, threshold, or direction window.
+Nothing in the backtest reads this data.** This section exists so that question has a
+documented home instead of relying on memory.
+
+**Why it is being collected** (this part *is* measured, §4.3a): over 12 months, as overnight
+(00:00–05:00) predictors of the 06:00–08:00 session, Soda's own meter scored AUC 0.729 while
+every accessible remote substitute was worse — Golden ridge PWS 0.627, Hwy 93 RWIS 0.587,
+Rooney Rd RWIS 0.551 — and combining them added nothing. Lookout Mtn is the one candidate never
+tested at scale: it sits ~2,000 ft above Soda at 39.7392, -105.2419, upstream in the drainage,
+and is the only true ridge-top station inside it. The hypothesis is that ridge flow leads the
+valley jet and could extend usable lead time past the ~60-minute horizon where §7.1 shows the
+current rule collapsing to a coin flip. **That is a hypothesis, not a finding.**
+
+**Collection started 2026-07-25** via `scripts/archive-holfuy.mjs`. Holfuy publishes a rolling
+~5.9-day window with no backfill and station 1295's archive API returns `{"error":"No access"}`,
+so missed days are permanently gone — this is what forces the *daily* archive cadence.
+
+**Scoring is now automated** by `scripts/analyze-lookout.mjs`, which the daily refresh runs after
+the backtest. It writes one row per paired morning to `research/lookout-log.csv` and reports the
+state of the evidence. Two design choices in it matter:
+
+- **It is head-to-head against Soda, not standalone.** Lookout's AUC on its own would be close to
+  meaningless — a ridge station correlates with the session because both respond to the same
+  synoptic setup, so a flattering number could be entirely redundant with what Soda's own meter
+  already gives us at 5am for free. The script scores both over the same window, on the same
+  days, against the same label. The question is whether the ridge *beats the meter we have*.
+- **It refuses to print AUC below n=30** (§3.3). At single-digit n the statistic is noise, and
+  quoting it is precisely how an unvalidated hunch becomes a remembered finding.
+
+**Time-weighting correction (2026-08-02).** Holfuy days are *mixed cadence*: the archiver merges
+runs by timestamp, so one file holds ~1-minute rows for hours captured while fresh and ~15-minute
+rows for hours that had already thinned. The day's `cycle_type` reports only the finest cadence
+present. Judging coverage by sample count against it wrongly discarded 2026-07-29 (80 overnight
+samples at ~3.75 min real spacing, scored 0.27 against a 1-minute ideal), and an unweighted mean
+over such a window is effectively a mean of its densest hours — a materially different number for
+a decaying flow. Coverage is now measured in *time*, and all statistics are time-weighted. **The
+figures below therefore supersede the earlier hand-built table**; they differ by a few tenths.
+
+**The hypothesis, in its original form.** This did not come from a model, it came from a local
+who rides here. His exact words:
+
+> "If that meter has been clocking 20+mph with 30+mph gusts, after midnight somewhat steady out
+> of West-ish, then it's a GO! Like this past Sunday, it was blowing West-ish solid 25+, we had a
+> 3 hour sesh. It's a really good predictor of longevity. In the fall you see that overnight
+> 25+mph with 30+mph gusts happening regularly."
+
+That is a specific, falsifiable, four-part conjunction — **sustained ≥20 mph, gusts ≥30 mph,
+West-ish, after midnight** — plus a secondary claim that it predicts *session length*, not just
+whether wind happens. Test it as stated. Do not paraphrase it into "the ridge was windy": the
+20 mph *sustained* term is doing most of the work (see below), and dropping it produces a
+different and much worse rule.
+
+**Everything observed so far**, Lookout 00:00–05:00 vs. Soda's gate-conditioned label, as of
+2026-08-02. n=8 usable mornings, 3 rideable:
+
+| Date | avg | max gust | dir | Rule says | Actual |
+|---|---|---|---|---|---|
+| 2026-07-26 | 21.4 | 34.2 | 257° | **GO** | GOOD 60 min ✓ |
+| 2026-07-27 | 20.1 | 36.7 | 265° | **GO** | nothing ✗ |
+| 2026-07-28 | 19.1 | 39.8 | 254° | no-go | nothing ✓ |
+| 2026-07-29 | 21.1 | 42.9 | 293° | **GO** | GOOD 40 min ✓ |
+| 2026-07-30 | 17.5 | 38.5 | 259° | no-go | nothing ✓ |
+| 2026-07-31 | 8.7 | 26.7 | 339° | no-go | nothing ✓ |
+| 2026-08-01 | 20.5 | 34.8 | 255° | **GO** | nothing ✗ |
+| 2026-08-02 | 26.0 | 41.6 | 257° | **GO** | GOOD 115 min ✓ |
+
+(2026-07-25 archived but holds too little 00:00–05:00 data to summarise. Recorded as absent, not
+calm — §4.2.)
+
+**Fires 5 times, right 3 (60%) against a 29.4% base rate, and — the part that matters — missed
+zero sessions.** Every rideable morning in the sample had ridge conditions matching his
+description. All three errors are false alarms, which per §2 is the cheap direction.
+
+The sustained term is load-bearing: gusts ≥30 alone fires on 7 of 8, and the West-ish filter only
+excludes 2026-07-31, which the speed terms already reject. **A gust-only reading of this rule
+does not work.** His longevity claim also survives first contact — the two strongest ridge nights
+(26.0 and 21.4 mph) produced the two longest sessions (115 and 60 min).
+
+His anecdote checks out independently, which is worth noting for source reliability: "this past
+Sunday… solid 25+… 3 hour sesh" corresponds to 2026-08-02, where the archive independently
+records 26.0 mph sustained and a 115-minute session.
+
+**This is still n=8 and nothing is validated.** But the honest summary has moved from "no signal"
+to **"the strongest untested candidate we have, and it is beating the shipped rule's error
+profile on the sample so far."** That is a reason to prioritise collection, not a reason to ship.
+
+**⚠️ Do not let the above harden into a rule.** Per §7 rule 6 and §2's asymmetry, the way this
+goes wrong is somebody reads the 60% and wires it into `SKILL.md`. It needs a full shoulder season
+(§4.5a: Sep/Mar/Oct carry the positives) and enough positives to survive the §7 rule 4 monthly
+jackknife. Realistically spring 2027.
+
+**Do not** hand-fit a threshold to the table above and put it in `SKILL.md`. Per §7 rule 6,
+shipping a number that reads as insight but is not is worse than shipping nothing — and per §2
+the asymmetric cost means a bad ridge rule that suppresses mornings is the most expensive
+possible mistake.
+
+---
+
+## 9. Sequencing
+
+> ⚠️ **This list was written under the framing corrected in §1 and §3, and is kept for history.
+> The current order is: (a) keep the daily log running — it is the only thing that buys trust and
+> it only accrues in calendar time; (b) start the forward HRRR collector (§13.7), for the same
+> reason; (c) re-score the backtest at gate−30 (§1.1); (d) test a direction-aware morning trigger
+> (§10.1). Nothing ships to the phone for at least a year.**
+
+1. **Apply the park-hours filter everywhere** (§4.5). It is a hard gate, it is already
+   verified, and it costs one lookup table. No point predicting wind for a closed park.
+2. **Start the prediction log** (§3.2). Zero infrastructure. Nothing downstream can be
+   validated without it, and it accumulates only in real time — it cannot be backfilled.
+   This is now the top *time-sensitive* item, since the archiver no longer is.
+3. ~~**Fix the `DECAYING` threshold**~~ — **done.** Widened ±1.5 → ±3.0 mph, confirmed by
+   both MKI's 1–3 m/s modulation band and a measured 5.6 mph median intra-hour spread (§5).
+4. **Build the archiver** (§4.4). Still worth doing as insurance against Ecowitt data loss,
+   but at a normal priority rather than an emergency.
+5. **Tier 1 from the archive** (§5). Establishes the validation harness without needing any
+   external forecast source.
+6. **Only then consider Tier 2** (§6), and only if Tiers 0–1 leave a gap worth the effort.
+
+Explicitly **not** on this list: building an automated alarm. See §3 for why.
+
+---
+
+## Appendix A — Physics carried over from the `wind-guru` reference
+
+> **Scope note — deliberately not mirrored into the skill.** This appendix is the *derivation*
+> layer: it exists so the numbers elsewhere in this document can be justified and re-derived.
+> `SKILL.md` carries only the conclusions that change a morning call (±3.0 mph modulation band,
+> direction rotation ≠ decay, sunrise-driven breakdown) and should never absorb the reasoning
+> behind them — the skill is loaded while someone stands in their kitchen with gear in the car.
+> If a finding here starts changing live behaviour, promote the **one-line conclusion** and tag
+> the owning section 🔗 SHIPPED rather than copying the physics across.
+
+Condensed from `~/Code/wind-guru/docs/katabatic-winds-reference.md`, which is the fuller
+treatment (definitions, full literature table, ASCOT case-night detail). Repeated here so this
+document is self-contained and the same ground does not get re-covered. **Primary source for
+the Front Range material: Poulos, Bossert, McKee & Pielke Sr. 2007, *J. Atmos. Sci.* 64,
+1857–1879 — the "MKI" paper (Part I: Poulos et al. 2000, *JAS* 57, 1919–1936).** Treat it as
+authoritative; a co-author is a neighbour.
+
+### A.1 Definition — use the narrow one
+
+Two definitions of "katabatic" are in circulation and it is the biggest source of confusion:
+
+- **Broad/classical:** any downslope wind, including foehn/chinook.
+- **Narrow/modern operational:** only **cold, negatively buoyant, gravity-driven drainage
+  flow**. **Use this one.** Under it a chinook is *not* katabatic — it warms by adiabatic
+  compression and is dynamically, not buoyancy, driven.
+
+Formation chain: clear sky → longwave radiative cooling of the surface → slope-adjacent air
+cools → density rises → negative buoyancy → downslope acceleration → pooling in valley bottoms
+and on the plains. Required ingredients: elevated cold source, clear sky, dry air (limits
+longwave trapping), weak-or-reinforcing synoptic gradient, and a slope with a drainage path.
+
+Magnitude is set by the **temperature deficit of the drainage layer relative to free air at the
+same altitude** and by the **surface pressure-gradient force**. Depth of the cold layer ≈ depth
+of the katabatic layer. Onset after sunset, strongest pre-dawn, breaks down after sunrise as the
+slope warms and the flow reverses to anabatic — which is the physical basis of the measured
+"+57 min past sunrise" close in §4.5.
+
+### A.2 MKI — mountain waves change everything (the key finding)
+
+On the Front Range, terrain-forced mountain waves and katabatic drainage **coexist on most
+clear nights with westerly flow aloft**, and near the surface they are often "inseparable and
+indistinguishable." Two interaction mechanisms:
+
+**Turbulence/mixing.** Katabatic flow normally needs strong surface stratification
+(**dθ/dz > 10 K/km**). A mountain wave makes that stratification weaker and deeper, so the
+katabatic layer is **deeper but its temperature contrast is smaller** → **slower jet, sitting
+higher up**. Strong enough wave momentum **scours** the drainage layer off the upper slopes
+entirely, down to the wave separation point. **Higher Froude number → scouring reaches farther
+downslope.**
+
+**Why this is good news for Soda.** For **0.40 < Fr < 1.0** the upper slopes scour but flow
+below the separation point stays quiescent enough for katabatic flow to form. Even at Fr ≈ 1.0,
+low-elevation drainage can survive if surface cooling builds stratification strong enough to
+block wave penetration. Soda sits at the mountain–plains interface, i.e. **on the favourable
+side of the separation point** — upper-slope scouring does not imply a dead morning here.
+
+Case-night reference values: Fr = U/(NH) ≈ **0.45** with H = 2000 m (nonlinear wave regime);
+geostrophic flow **319° at 8.6 m/s**; stability in the 2–4 km MSL layer **1.6 → 1.0 K/km**
+overnight. Front Range terrain-wave vertical wavelength ≈ **4 km**.
+
+### A.3 Two variability timescales — expect them, do not call them decay
+
+Waves aloft perturb **surface pressure by O(1 hPa)**. Because katabatic flow is
+pressure-gradient driven, wave structure thousands of metres overhead modulates surface speed:
+
+| Band | Timescale | Amplitude | Cause |
+|---|---|---|---|
+| Meso-β | **O(1 hour)** | **1–3 m/s (2–7 mph)** | mountain-wave system evolution |
+| Microscale | **O(1 minute)** | — | wave breaking aloft |
+
+Poulos et al.'s own framing: "a far more variable stable nocturnal boundary layer in complex
+terrain than has been generally understood to exist." **Swings of 2–7 mph on the hour scale are
+expected signal, not instrument error and not the event dying.** This is the direct basis for
+the `DECAYING` threshold bug in §5.
+
+### A.4 Do not generalise across stations
+
+The ASCOT network found the timing of the overnight wind shift **highly variable canyon to
+canyon** — Eldorado and Coal Creek, a short distance apart, behaved differently on the same
+night, with low-level Coal Creek staying continuously westerly while BAO rotated easterly →
+westerly → N/NE by 0400 MST.
+
+**Consequence for the multi-station check (Soda / Standley West / Boulder Res):** these drain
+different canyons and **must not be assumed correlated**. Whether one leads or predicts another
+is an empirical question the archive can answer — and if the answer is "weakly," the other
+stations are not useful evidence about Soda and should not be presented as if they were.
+
+Corollary: flow aloft is **not** background detail. It sets katabatic depth, speed, and whether
+the flow exists at all on the upper slopes.
+
+### A.5 Quick-reference numbers
+
+| Quantity | Value | Source |
+|---|---|---|
+| Typical gentle/pure katabatic speed | 1–4 m/s (2–9 mph) | general |
+| Front Range near-surface, lowest 10 m, case night | 2–5 m/s | ASCOT 4 Sep 1993 |
+| Katabatic jet depth | ~400 m AGL | Banta et al. 1995 |
+| Stratification needed to support katabatic flow | dθ/dz > 10 K/km | Poulos et al. 2007 |
+| Case-night Froude number | ~0.45 | nonlinear wave regime |
+| Fr with upper-slope scouring but surviving low-level drainage | 0.40 < Fr < 1.0 | Poulos et al. 2007 |
+| Wave-induced surface pressure perturbation | O(1 hPa) | Poulos et al. 2007 |
+| Resulting katabatic speed modulation | 1–3 m/s over O(1 h) | Poulos et al. 2007 |
+| Microscale oscillation timescale | O(1 min) | wave breaking |
+| Front Range terrain wave vertical wavelength | ~4 km | Lee et al. 1989 |
+
+### A.6 Fetching the sources
+
+The AMS site **403s plain fetchers**. Use `curl -A "Mozilla/5.0 ..."` or the playwright-cli
+fallback. Same pattern as the Lakewood parks site in §4.5. Other directly on-topic references,
+should Tier 2 ever need them: **Coulter & Gudiksen 1995**, *J. Appl. Meteor.* 34, 1419–1429,
+"The dependence of canyon winds on surface cooling and external forcing in Colorado's Front
+Range"; **Banta et al. 1995**, *Theor. Appl. Climatol.* 52, 27–42 (canyon flows over the
+adjacent plains); **Durran 1990**, *Meteor. Monogr.* 45, 59–81 (mountain waves and downslope
+winds — the standard reference).
+
+---
+
+## 9. Analysis integrity — mistakes that have actually happened here
+
+Not hypothetical failure modes. Each of these silently produced *better-looking* numbers, which
+is why none of them announced itself. Check this list before believing a result that improved.
+
+### 9.1 The timezone bug (found 2026-08-02)
+
+**What happened.** Every window in this project is defined in Colorado time — gate open, the
+overnight predictor window, call times. But `season.mjs` and `label.mjs` built those instants with
+`new Date(y, m, d, hour)`, which means *whatever timezone the laptop is in*. That was correct for
+as long as the laptop was in Denver, and silently wrong the first time the archive was refreshed
+from a trip. On an America/Chicago machine the labeller placed the 6:00 gate at 6:00 Chicago =
+**5:00 Denver**, granting itself a free extra hour of pre-dawn drainage flow.
+
+**What it cost.** Measured on the full archive:
+
+| | Chicago (wrong) | Denver (correct) |
+|---|---|---|
+| Rideable mornings | 121 | 92 |
+| Base rate | 38.7% | 29.4% |
+| Blew before the gate | 51 | 79 |
+| Rule missed sessions | 25.6% | 20.7% |
+| Beats persistence both axes | YES | NO |
+
+It re-admitted precisely the mornings §4.5's gate amendment exists to exclude, inflated the base
+rate by 9 points, and flipped the persistence verdict to a false positive.
+
+**Why it was caught.** Only because 38.7% did not match the 29.5% already written in this file.
+**That is the actual lesson: the recorded numbers are a regression test.** A result that disagrees
+with §7.1 or §4.6 is a bug until proven otherwise — do not rationalise the drift, and do not
+overwrite the old number with the new one to make them agree.
+
+**The fix.** `scripts/lib/zone.mjs` pins `America/Denver` explicitly and everything derives
+station-local instants through `zonedTime`/`zonedTimeFrom`. Verified by running the backtest under
+`TZ=America/Chicago`, `TZ=America/Denver` and `TZ=Asia/Tokyo` and diffing: byte-identical.
+**Never build a station-local instant from the machine clock.**
+
+**The live morning-call script had the same bug, fixed the same day.**
+`.github/skills/dp-katabatic-check/scripts/katabatic-check.mjs` built its windows from the machine
+clock in seven places: the hourly rollup buckets, the `--since` window, the Ecowitt request
+strings, the report header, the winter-shutdown month test, the gate lookup, and the logged call
+date/time. Run from outside Mountain Time every printed hour was shifted. All now route through
+`zone.mjs`; verified by running the live check under Denver, Chicago, Tokyo and London and
+diffing the hourly table — identical.
+
+**A second, subtler instance in the same family.** `fmtEcowittDate` (the string sent to the
+Ecowitt API, which wants *station* wall-clock) also read the machine clock — but was correct *by
+cancellation*: callers built a machine-local midnight and formatted it machine-locally, so the
+string always read `00:00:00` whatever the zone. Two errors annihilating. That held only for
+callers passing constructed midnights; it broke for the live check, which passes a real
+`new Date()`. Both the formatter and the archiver's day windows are now genuinely station-pinned
+rather than accidentally correct. **Verify archive day boundaries after touching this** — an
+archived day must start at 00:00 Denver, which is checkable directly from any day file.
+
+**Regression test.** `npm run test-timezone` asserts absolute instants for gate open, DST
+changeover days, and a synthetic pre-gate blow that must NOT label rideable. It runs as part of
+`npm run lint`, and `npm run test-timezone:all` sweeps five zones. It was validated by
+reintroducing the original bug, which it catches with five failures.
+
+### 9.2 Mixed-cadence Holfuy days (found 2026-08-02)
+
+The archiver merges Holfuy runs by timestamp, so a single day file holds ~1-minute rows for hours
+captured while fresh and ~15-minute rows for hours that had already thinned. `cycle_type` reports
+only the *finest* cadence present. Two consequences:
+
+- Judging coverage by sample count against `cycle_type` discards well-observed days — 2026-07-29
+  has 80 overnight samples at ~3.75 min real spacing and scored 0.27 against a 1-minute ideal.
+- An unweighted mean over such a window is effectively a mean of its densest hours, which for a
+  decaying overnight flow is a materially different number than it claims to be.
+
+Coverage is therefore measured in **time**, and all Holfuy statistics are **time-weighted**
+(`analyze-lookout.mjs`). Any future analysis of this data must do the same.
+
+### 9.3 Reading `speed` when the claim is about `gust`
+
+Holfuy carries both `speed` and `gust` per point. §8.1's hypothesis is explicitly about gusts, and
+an early pass tested it against peak *speed*, understating the gust figures by 5–10 mph and nearly
+producing a "he's wrong" conclusion from the wrong column. Check which field a claim is about.
+
+### 9.4 Process: build the analysis the user asked for
+
+§8.1's question — "the ridge was honking overnight, so the morning will be good" — is a simple
+one-variable claim. It was initially answered with a head-to-head AUC comparison against Soda's
+own meter, which is a defensible experiment and *not the question asked*. Worse, that framing was
+built and wired into the daily pipeline before anyone checked whether it was wanted.
+
+Ask before building. A stated hypothesis should be tested **as stated** first; anything more
+elaborate is a follow-up, not a substitute. The head-to-head is retained in
+`scripts/analyze-lookout.mjs` because it is genuinely useful for judging whether the ridge adds
+anything over the meter we already have — but it answers the second question, not the first.
+
+---
+
+## 10. The wake-up alarm and the night-before forecast (2026-08-10)
+
+This section exists because of a missed session. The user checked the app at 05:30 on 2026-08-10,
+saw almost nothing, went back to bed, and woke at 07:00 to a session in progress. The meter was
+genuinely dead at 05:30 (30-min avg 4.8 mph, direction swinging across four quadrants), locked at
+05:35, and was averaging 17.4 mph by 06:00. **Nothing in the 05:30 data could have called it** —
+which was the whole point.
+
+His response reframed the project, correctly:
+
+> *"The entire project ... is how I can predict this either the night before or have some
+> automation that can check in the morning and then wake me up. If I'm just going to wake up at
+> 5:30 every day I wouldn't be wasting tokens having you help me do all this research."*
+
+Three questions got measured. Two failed, one worked.
+
+### 10.1 A morning poll-alarm alone does NOT work
+
+`scripts/DEBUG-alarm-viability.mjs` — replays a trailing-average alarm (15-min avg ≥ 14 mph) over
+320 labelable archived mornings, 95 rideable.
+
+**The drive-time objection was wrong.** When the alarm catches a session there is plenty of it
+left, even from 45 minutes away:
+
+| Drive time | Sessions with ≥30 min remaining on arrival | Median min left |
+|---|---|---|
+| 5 min | 89% | 80 |
+| 20 min | 89% | 70 |
+| 45 min | 85% | 60 |
+
+Measured rideable window: median 60 min, p25 30, p75 93, max 210.
+
+**The real problem is that the trigger does not discriminate.** Sweeping how early the alarm is
+allowed to fire (45-min drive):
+
+| Earliest fire | Sessions caught | False wakes | Wakes/week |
+|---|---|---|---|
+| gate−180m | 86% | 162 | 5.3 |
+| gate−60m | 82% | 157 | 5.1 |
+| gate−0m | **49%** | 183 | 5.0 |
+
+It fires on roughly 250 of 320 mornings. Wind touching 14 mph for 15 minutes happens on most
+mornings; sustaining 30 min *after the gate* does not. **~5 wakes/week for ~1.7 real sessions.**
+No threshold tuning fixes this — and note gate−0m confirms the user's instinct exactly: waiting
+until the gate opens costs half the sessions.
+
+> **Two caveats on the word "does NOT work" in this heading (added 2026-08-10).**
+>
+> 1. **The trigger tested is the crudest possible one** — a 15-minute average ≥14 mph. It ignores
+>    direction lock, which `SKILL.md` treats as the most reliable single signal, and which is
+>    precisely what separates drainage from ordinary morning wind (§10.5 caveat 3). "Dead on the
+>    dumbest version" is not the same as dead. A direction-aware trigger is untested, needs no new
+>    data, and is the cheapest open item aimed at the actual goal.
+> 2. **It would not be shipped even if it worked**, for at least a year — see §3. The user does
+>    not trust the data yet and will wake at gate−30 regardless. So this is a *research* item
+>    whose value is building the track record, not a feature with a delivery date.
+
+> ⚠️ Scoring an alarm **only on rideable mornings makes it look excellent** — the first version of
+> this analysis reported "100% of sessions caught" because it never counted the mornings the alarm
+> fired for nothing. Always score the false-wake side.
+
+### 10.2 A night-before forecast from the global model does NOT work
+
+`scripts/DEBUG-night-before-signal.mjs` and `scripts/DEBUG-night-before-model.mjs` — evening-before
+(18:00–23:00) weather from Open-Meteo's ERA5 archive against the same 320 labeled mornings.
+
+**§6.1's headline predictor is worthless at this resolution.** Wind aloft carries no information:
+
+| 700mb wind, evening before | Nights | Rideable |
+|---|---|---|
+| 0–8 mph | 91 | 30% |
+| 8–14 | 94 | 32% |
+| 14–20 | 61 | 28% |
+| 20–28 | 38 | 21% |
+| 28+ | 36 | 36% |
+
+Base rate is 30%. Every band is 30%. This is **not** the §6.2 non-monotonicity showing up — it is
+flat, which is different and worse.
+
+Two variables separated weakly (evening pressure change 0.55, cloud cover 0.51, standardised mean
+difference). Combined into a screen and cross-validated on unseen nights they were still useless:
+**91% of rideable mornings kept, but only 9% of dead nights ruled out.** The alarm would stay armed
+291 nights out of 320.
+
+> ⚠️ **Weak per-variable separation did not survive into prediction.** 0.5-ish separations looked
+> encouraging in the table and delivered essentially nothing. Do not stop at a separation table.
+
+### 10.3 HRRR DOES work — this is the finding
+
+> ⚠️ **SUPERSEDED 2026-08-10 — see §13.3.** Pinned to a real day-ahead run the monotonicity below
+> disappears and the 18+ band falls from 100% to 17%. HRRR works far better at short lead than at
+> forecast lead, which is a different and much weaker claim than this heading makes.
+
+`scripts/DEBUG-hrrr-night-before.mjs`. The global model runs on a ~7-mile grid and cannot resolve
+the drainage. **HRRR runs at ~2 miles and forecasts the surface wind at the lake directly.**
+
+Fetch it from `https://historical-forecast-api.open-meteo.com/v1/forecast` with `models=gfs_hrrr`.
+Verified 2026-08-10 to cover 2025-07-30 → present with no gaps.
+
+HRRR's own 05:00–08:00 wind forecast at Soda, versus what actually happened:
+
+| HRRR forecast (mph) | Nights | Rideable |
+|---|---|---|
+| 0–6 | 173 | **17%** |
+| 6–9 | 71 | 39% |
+| 9–12 | 44 | 43% |
+| 12–15 | 17 | 47% |
+| 15–18 | 8 | 50% |
+| 18+ | 7 | **100%** |
+
+Monotonic, wide, and it separates a large low-risk group: **more than half of all nights fall in
+the 0–6 band at 17%.** That band is what makes an alarm bearable.
+
+### 10.4 The system, end to end
+
+`scripts/DEBUG-system-endtoend.mjs`. HRRR arms the alarm the night before; on armed nights the
+meter is polled and wakes the user when wind is real. Scored over 320 mornings (46 weeks, 78
+catchable sessions, 45-min drive, alarm allowed from gate−60m):
+
+| HRRR arm threshold | Wakes/week | Wasted wakes/week | Sessions caught | Wasted per session |
+|---|---|---|---|---|
+| none (alarm every night) | 5.1 | 3.4 | 78/78 | 2.0 |
+| ≥ 4 mph | 4.2 | 2.7 | 69/78 | 1.8 |
+| **≥ 5 mph** | **3.4** | **2.0** | **62/78 (79%)** | **1.5** |
+| ≥ 6 mph | 2.7 | 1.6 | 53/78 (68%) | 1.4 |
+| ≥ 8 mph | 1.9 | 1.0 | 42/78 (54%) | 1.1 |
+| ≥ 10 mph | 1.2 | 0.5 | 28/78 (36%) | 0.9 |
+
+Baseline for comparison: **waking manually every day is 7.0 wakes/week** — and misses mornings
+like 2026-08-10 anyway.
+
+**≥5 mph is the recommended operating point**: half the wake-ups of the status quo for 79% of the
+sessions. The threshold is a genuine user preference dial, not a tuned constant — someone happy to
+be woken more often should run `none` or `≥4`.
+
+### 10.5 Caveats — do not skip these before shipping
+
+1. ~~**The HRRR result is a best case.**~~ → **RESOLVED 2026-08-10, §13. The caveat was correct
+   and the result did not survive.** Pinned to a genuine day-ahead run, the wind signal loses its
+   monotonicity and the night-before call costs 35% of sessions. The thresholds in §10.4 are
+   withdrawn.
+2. **One year, 95 positives.** Thin, and seasonal coverage is single-pass. §4.7 applies.
+3. **The morning trigger is deliberately crude** (15-min avg ≥ 14 mph). It ignores direction lock,
+   which §2 of the skill treats as the most reliable signal. A smarter trigger is the cheapest
+   remaining improvement and has not been tested.
+4. **The label is gate-conditioned** (§7 rule 1), so all of this answers "will I get a session if
+   I drive out", not "did wind exist".
+
+### 10.6 What this means for the app
+
+> ⚠️ **SUPERSEDED 2026-08-10 — see §13.7.** Caveat 1 below was tested and the result failed. The
+> first bullet is withdrawn; the second still stands and now has nothing left to gate it, so the
+> alarm should not be built either.
+
+- ❌ ~~A night-before push ("alarm armed for tomorrow") is justified by 10.3~~ — **it is not.**
+  §13.5: the arming signal does not survive a real forecast lead.
+- A morning wake-up alarm is **only** justified when gated by the forecast. Shipping it ungated
+  would wake users ~5×/week for a ~30% hit rate and would be abandoned within a fortnight. **With
+  the forecast gate now unsupported, this is on hold rather than pending.**
+- `expo-notifications` is already a dependency, but a standard push will not wake a sleeping user
+  through Do Not Disturb. Delivery mechanism is unresolved and is the next product decision.
+
+---
+
+## 11. Why mornings happen — event diagnosis, and the variable that was missing (2026-08-10)
+
+§10 answered "can we predict" and stopped there. The user's follow-up reframed the goal, and it
+is a better goal:
+
+> *"I want to be able to understand why this morning happened, if it was katabatic, chinook,
+> drainage whatever. We need to be able to understand why things are happening instead of just
+> saying...refresh the meter."*
+
+`scripts/DEBUG-event-classification.mjs` and `scripts/DEBUG-pack-the-car.mjs`.
+
+### 11.1 The missing variable was the depth of the inversion, and HRRR reports it directly
+
+Every predictor tried in §10.2 described the *forcing* (wind aloft, pressure, cloud). None
+described the **cold-air layer that the drainage flow actually is**. HRRR carries it as
+`boundary_layer_height` — the depth of the well-mixed surface layer, which overnight is the depth
+of the inversion. Shallow means the lid is intact.
+
+Measured over 320 mornings, on its own:
+
+| Lid depth 05:00–08:00 | Nights | Rideable |
+|---|---|---|
+| 0–60 m | 15 | **67%** |
+| 60–100 m | 58 | 47% |
+| 100–200 m | 88 | 25% |
+| 200–400 m | 93 | 28% |
+| 400+ m | 66 | **15%** |
+
+Base rate 30%. This is the strongest single night-before signal found so far, and unlike §10.2's
+pressure/cloud correlations it is **mechanistic**: it measures the thing that does the work.
+
+> ⚠️ **Do not use 850 mb at this site.** 850 mb sits near 1500 m; Soda Lakes is at 1780 m, so
+> those values are extrapolated *underground*. A first pass used them and produced a nonsense
+> classification in which no morning anywhere in the archive had strong flow aloft (`aloft850`
+> averaged 4–5 mph against a true 700 mb average of ~15). **700 mb (~3100 m) is the lowest
+> usable level.** Found and corrected 2026-08-10.
+
+### 11.2 Four kinds of morning, and they are not equally worth chasing
+
+> ⚠️ **AMENDED 2026-08-10 — see §13.1.** "Wind aloft is not a positive signal at this site" was
+> measured at 700 mb (~3100 m) and does not generalise. At **800 mb (~2035 m)**, just above the
+> inversion, more wind is *strongly* positive. The classification below is still valid as stated,
+> but it is a 700 mb classification.
+
+Classifying by wind aloft (700 mb), lid depth, overnight cooling and 05:00→08:00 warming:
+
+| Pattern | Nights | Rideable | Avg lid | Avg wind aloft |
+|---|---|---|---|---|
+| **DRAINAGE** (calm aloft, deep cooling, shallow lid) | 126 | **41%** | 115 m | 12.4 mph |
+| **MIXED-DOWN** (strong aloft, lid already broken) | 40 | 35% | 543 m | 36.3 mph |
+| WINDY-ALOFT (strong aloft, no clean structure) | 41 | **17%** | 166 m | 31.4 mph |
+| CALM-ALOFT (nothing driving it) | 113 | 19% | 383 m | 12.8 mph |
+
+No morning in the archive met the CHINOOK test (strong aloft **and** ≥12 °F warming through the
+session window), which is consistent with §6.2's contamination worry being small — 5 candidate
+days there, none surviving a stricter joint test.
+
+Note that WINDY-ALOFT is the *worst* bucket at 17%. Strong flow aloft without a shallow lid is
+actively bad, exactly as Appendix A.2 predicts: the wave scours the drainage layer instead of
+feeding it. **Wind aloft is not a positive signal at this site** — *at 700 mb.* See §13.1: at 800 mb the
+relationship reverses and is one of the strongest signals in the project.
+
+### 11.3 Diagnosis of 2026-08-10 — the morning that started this
+
+| Measurement | Value | Context |
+|---|---|---|
+| Wind aloft (700 mb) | **5.7 mph** | rideable-morning average is 16.8 |
+| Overnight cooling | **18.3 °F** | 83.2 °F at 20:00 → 70.1 °F at 07:00 |
+| Warming 05:00→08:00 | 8.1 °F | far below the ≥12 °F chinook test |
+| Lid depth 05:00–08:00 | 125 m | archive average 270 m |
+| Lid depth at 06:00 / 07:00 | **55 m / 40 m** | still fully intact an hour past sunrise |
+| Lid depth at 08:00 / 09:00 | 325 m / 1120 m | this is the collapse |
+| Evening cloud | 32% | clear enough for strong radiative cooling |
+| Neighbours at 07:40 | Standley 0.0, Boulder Res 2.7 | local flow, not basin-wide |
+
+**Verdict: textbook katabatic drainage.** Not a chinook (nothing aloft to bring down, and the
+surface cooled 18 °F rather than warming). Not mixed-down momentum (700 mb was 5.7 mph — there
+was nothing up there to mix). Pure gravity drainage off clear, radiatively-cooled terrain.
+
+**Why it peaked *after* sunrise, which looks wrong:** the standard rule is that solar heating
+destroys the inversion ~57 min after sunrise (§4.5). This morning the lid was still **40 m deep at
+07:00**, an hour past the 06:08 sunrise, and did not break until 08:00. The clock that matters is
+the lid, not the sun — and on this morning the lid ran late. That is not rare: **37 of 95 rideable
+mornings (39%) had the lid under 100 m through 05:00–08:00.**
+
+**Why 05:30 was genuinely dead:** the lid was 550 m at 03:00 — briefly broken, which matches the
+meter (wind collapsed from 13 mph at 03:15 to 3 mph by 04:00, and humidity jumped 29%→36%). It
+re-formed to 80 m by 05:00, and drainage restarted at 05:35, building to 17.4 mph by 06:00. The
+second surge was *stronger* than the first (17–19 vs 11–13 mph), consistent with the cold pool
+recharging while the surface flow was stalled.
+
+So the honest answer to "could 05:30 have known": not from the meter, no. But the **lid was
+already re-formed at 05:00**, and that is a forecast field, not a meter reading.
+
+### 11.4 The night-before packing call
+
+> ⚠️ **SUPERSEDED 2026-08-10 — see §13.5.** Every number in this section comes from the *freshest
+> available* HRRR forecast, which for a 6 a.m. target may be only an hour or two old. Pinned to a
+> genuine day-ahead run, SLEEP IN degrades from 9% to 23% and costs 35% of sessions. **Do not
+> build on the thresholds below.** The section is retained because the *physics* it describes
+> (the lid does the work) held up.
+
+`scripts/DEBUG-pack-the-car.mjs`. Both signals together, evening before, 320 mornings:
+
+| | lid <100 m | lid 100–250 m | lid >250 m |
+|---|---|---|---|
+| **HRRR wind 0–6 mph** | 38% (n=48) | 10% (n=70) | **7%** (n=55) |
+| **HRRR wind 6–9 mph** | 71% (n=17) | 38% (n=21) | 24% (n=33) |
+| **HRRR wind 9+ mph** | **88%** (n=8) | 50% (n=34) | 41% (n=34) |
+
+The lid does most of the work: at the same 0–6 mph forecast wind, a shallow lid is **38%** and a
+broken one is **7%** — a five-fold spread the wind forecast alone cannot see.
+
+Collapsed to a decision:
+
+| Call | Nights | Rideable | Rate | Share of all sessions |
+|---|---|---|---|---|
+| PACK | 42 | 24 | **57%** | 25% |
+| MAYBE | 153 | 60 | 39% | 63% |
+| SLEEP IN | 125 | 11 | **9%** | 12% |
+
+**Skipping only the SLEEP IN nights buys back 2.7 mornings a week and costs 12% of sessions.**
+That is the deliverable — not an alarm, a night-before call the user can act on with the car.
+
+For the record, 2026-08-10 would have been called **MAYBE** (HRRR morning wind 8.3 mph, lid
+125 m) — pack the car, expect to have to look. Correct, and honest about the uncertainty.
+
+### 11.5 What this does and does not change
+
+> ⚠️ **PARTLY SUPERSEDED 2026-08-10 — read §13.** The night-before *thresholds* below did not
+> survive being pinned to a real forecast run. The physics did. Do not act on §11.4's PACK/MAYBE/
+> SLEEP-IN numbers.
+
+- ⚠️ ~~The night-before call is real and worth building on.~~ → **§13.5: not currently buildable.**
+  The 57/39/9 table was computed from a near-analysis, not a forecast. §10.2's pessimism was
+  indeed a resolution problem — but the fix is not yet reachable from historical data.
+- ✅ Event type is diagnosable after the fact, which makes the prediction log far more useful —
+  a missed DRAINAGE morning and a missed MIXED-DOWN morning are different failures.
+- ⚠️ §10.5 caveat 1 still stands and is now the single most important open item: these HRRR
+  numbers come from the freshest available forecast, not a true evening run. **Re-test with a
+  fixed 00Z issue time before trusting the thresholds.**
+- ❌ Still does not solve the morning window. The lid explains *why* a session ran late; it does
+  not yet say when it will close on a given morning. That is the next question worth asking.
+
+---
+
+## 12. Data provenance — every source, and whether it is actually trustworthy
+
+Added 2026-08-10 at the user's request:
+
+> *"I want you to add a section that shows me all the things you are checking and via what
+> api/site. I am just taking you at your word right now that you are using proper stations that
+> are actually close by with good values."*
+
+Reasonable. Everything below was **measured on 2026-08-10**, not asserted. Reproduce with the
+distance/grid checks described in §12.5.
+
+### 12.1 Wind measurements — Ecowitt
+
+| Field | Value |
+|---|---|
+| API | `https://api.ecowitt.net/api/v3` (`/device/list`, `/device/history`) |
+| Auth | `ECOWITT_APPLICATION_KEY` + `ECOWITT_API_KEY` from repo `.env` |
+| Client | `scripts/lib/ecowitt.mjs`, also used by the live skill and the app's `services/ecowittService.ts` |
+| Fields pulled | `call_back=wind,outdoor` → wind speed, gust, direction, temperature, humidity |
+| Resolution | `cycle_type=5min` recent, `30min` older (§4.1), `240min` beyond ~1 yr and **unusable** (§4.1) |
+
+**Units are a live foot-gun.** The API silently ignores `wind_unit` / `temp_unit` / `pressure_unit`
+and falls back to metric. The correct names are `wind_speed_unitid=9` (mph), `temp_unitid=2` (°F),
+`pressure_unitid=3` (hPa). Passing the wrong name does not error. This bit again on 2026-08-10:
+an ad-hoc query using `wind_speed_unitid:6` (m/s) reported 9.0 mph where the true value was
+20.0 mph — a 2.24× understatement that looked entirely plausible. **Always use `lib/ecowitt.mjs`
+rather than hand-rolling the call.**
+
+### 12.2 The stations, and how far apart they actually are
+
+Coordinates below are what Ecowitt reports for each device, not what anyone typed into a doc.
+
+| Station | Lat, Lon | Distance from Soda | Role |
+|---|---|---|---|
+| **DP Soda Lakes** | 39.646115, −105.174958 | — | The target. NW point of Big Soda (§4.2) |
+| Lookout Mtn | 39.727868, −105.218365 | **9.8 km** | Ridge-top hypothesis (§8.1), not yet scored |
+| DP Standley West | 39.870467, −105.151622 | **25.0 km** | Neighbour cross-check |
+| DP Boulder Res | 40.072703, −105.228240 | **47.7 km** | Neighbour cross-check, thin history (§4.3a) |
+
+**Honest read on the neighbours:** at 25 km and 48 km these are *not* nearby stations, and they
+are not meant to be. They exist to answer "is this local drainage or a basin-wide event?", where
+distance is the point. They should never be treated as a substitute reading for Soda. §8's
+correlation work already establishes the inference only runs one way.
+
+### 12.3 Weather model data — Open-Meteo
+
+Two different endpoints, and **they are not interchangeable**:
+
+| Purpose | Endpoint | Model | Verified |
+|---|---|---|---|
+| Upper air + boundary layer + surface forecast | `historical-forecast-api.open-meteo.com/v1/forecast` | `models=gfs_hrrr` | ✅ full coverage 2025-07-30 → present |
+| Surface reanalysis | `archive-api.open-meteo.com/v1/archive` | ERA5 (default) | ⚠️ see below |
+
+No API key. No rate-limit problems observed pulling ~380 days in 120-day chunks.
+
+**Pinned forecast runs — `<var>_previous_day1`.** The historical-forecast endpoint also serves
+the value a given hour had *as forecast by the run issued a day earlier*, which is the only way to
+score a genuine night-before call (§13.2). It works for surface fields
+(`wind_speed_10m`, `temperature_2m`, `cloud_cover`, `relative_humidity_2m`, `dew_point_2m`,
+`surface_pressure`, `wind_gusts_10m`, `wind_direction_10m`, `cape`, `lifted_index`) and **fails
+for exactly the two fields that matter most**: `boundary_layer_height_previous_day1` returns null
+across the entire archive, and any `*_800hPa_previous_day1` / `*_700hPa_previous_day1` is rejected
+outright. Verified 2026-08-10.
+
+**The plain archive endpoint returns `null` for every pressure-level field.** Requesting
+`wind_speed_700hPa` there yields `"units": "undefined"` and an array of nulls — silently, with
+HTTP 200. The first §10.2 run reported "no signal in wind aloft" partly because the column was
+empty. Pressure levels must come from the historical-forecast endpoint.
+
+### 12.4 Which grid cell we are actually reading — the part worth checking
+
+Open-Meteo snaps a request to its nearest grid cell and reports which one. Measured:
+
+| Source | Grid point returned | Grid elevation | Distance from the real meter |
+|---|---|---|---|
+| **HRRR** | 39.652927, −105.188034 | 1780 m | **1.35 km** ✅ |
+| **ERA5** | 39.683655, −105.125000 | 1780 m | **5.98 km** ⚠️ |
+| True meter site | 39.646115, −105.174958 | **1740 m** (terrain API) | — |
+
+**This is a real finding, not bookkeeping.** ERA5's cell sits ~6 km east-northeast — out on the
+plains, off the drainage. That is a plausible contributing reason §10.2 found nothing: the global
+model was not looking at this canyon. HRRR at 1.35 km is genuinely on-site, and its 1780 m grid
+elevation is within 40 m of the true 1740 m terrain.
+
+> ✅ **RESOLVED 2026-08-10 — §13.1.** Both coordinates snap to the *same* HRRR grid cell and
+> return identical values, so nothing below changed any result. The naming complaint stands; the
+> accuracy concern does not. Retained for the record.
+
+⚠️ ~~**Known discrepancy, currently unfixed.**~~ `SUNRISE_COORDS` in `scripts/lib/sunrise.mjs`
+(39.6547, −105.1956) is **2.01 km from the actual meter** and is what every weather query in
+§10–§11 was issued against. Consequences:
+
+- **Sunrise: negligible.** 2 km of longitude shifts sunrise by well under a minute.
+- **HRRR: minor but real.** The code point lands 0.68 km from the returned cell; querying the true
+  meter coordinate could select a neighbouring cell. All §11 numbers should be re-checked against
+  the true coordinate before any threshold is treated as final.
+- The constant is also poorly named for what it is now used for — it began life as a sunrise
+  input and has quietly become the project's site location.
+
+### 12.5 Pressure levels — one is unusable at this site
+
+| Level | Approx height | Usable here? |
+|---|---|---|
+| 850 mb | ~1500 m | ❌ **Below the 1740 m terrain — values are extrapolated underground** |
+| 800 mb | **~2035 m** (measured via `geopotential_height_800hPa`) | ✅ ~295 m above ground. **Tested 2026-08-10 and it is the best level — §13.1.** Not pinnable, so unusable for a night-before call |
+| 700 mb | ~3100 m | ✅ above ground, the level used throughout §11 — and **flat**, i.e. no signal (§13.1) |
+
+The 850 mb trap produced a genuinely wrong result before it was caught (§11.1): a classifier built
+on it concluded that no morning in the entire archive had strong flow aloft.
+
+### 12.6 Other sources
+
+| Thing | Source | Notes |
+|---|---|---|
+| Sunrise | `scripts/lib/sunrise.mjs`, computed locally | No network. The live skill script separately calls `api.sunrise-sunset.org` with a non-fatal fallback |
+| Terrain elevation | `api.open-meteo.com/v1/elevation` | Used only for the §12.4 check |
+| Archived readings | Neon Postgres via `NEON_DATABASE_URL` | `scripts/lib/archive-store.mjs`; 320 labelable Soda mornings as of 2026-08-10 |
+| Park gate hours | §4.5, entered by hand from Bear Creek Lake Park | Not an API. Seasonal, and worth re-verifying annually |
+| Lookout Mtn (Holfuy 1295) | `scripts/archive-holfuy.mjs` | Separate source from the Ecowitt device of the same name — do not conflate (§8.1, §9.2) |
+
+### 12.7 What is NOT verified, and should not be assumed
+
+1. ~~**HRRR forecasts here are "freshest available", not a true evening run**~~ → **§13: tested,
+   and the concern was justified.** The night-before call does not survive pinning to a real
+   forecast run. §11.4's thresholds are withdrawn.
+2. ~~**The 2.01 km coordinate offset in §12.4 has not been corrected or re-run.**~~ → **§13.1:
+   closed.** Both coordinates snap to the same HRRR grid cell; the offset never mattered.
+3. ~~**800 mb has never been tested**~~ → **§13.1: tested, and it is the right level.** Monotonic
+   to 59% rideable, where 700 mb is flat. But it is not pinnable, so it cannot be used the night
+   before.
+4. **Ecowitt station siting is unverified beyond the NW-point note in §4.2** — no check of
+   anemometer height, obstructions, or calibration against a reference.
+5. **One year of data, 95 positives** (§4.7). Every rate in §10–§11 carries that sample size, and
+   restricting to the real season (§4.5b) cuts it to **77 positives over 255 mornings**.
+6. **The sign of forecast overnight cooling is not understood** (§13.4). It predicts the opposite
+   of what the physics suggests. Unused pending explanation.
+
+---
+
+## 13. The night-before call, re-tested honestly (2026-08-10)
+
+`scripts/DEBUG-pinned-forecast-test.mjs`. This section resolves §10.5 caveat 1 and §12.7 items
+1–3. **The headline is bad news: the §11.4 night-before call does not survive the test.**
+
+### 13.0 The regression check passed first
+
+Per §9.1, the numbers already in this document are a regression test. Recomputed with the fresh
+forecast, the §11.4 table reproduces exactly — PACK 57% (n=42), SLEEP IN 9% (n=125), MAYBE 40%
+(n=154 against a recorded 153, which is the one morning the archive has gained since). So the
+pipeline is sound and everything below is a real effect rather than a plumbing change.
+
+### 13.1 Two of the three §12.7 caveats are now closed, one favourably
+
+**The 2.01 km coordinate offset does not matter (§12.4, §12.7 item 2 — CLOSED).** Queried side by
+side, `SUNRISE_COORDS` (39.6547, −105.1956) and the true meter coordinate (39.646115, −105.174958)
+**snap to the identical HRRR grid cell** (39.652927, −105.188034) and return byte-identical wind.
+The offset is smaller than the grid spacing, so it was never capable of changing a result. No
+re-run was required. `DEBUG-pinned-forecast-test.mjs` queries the true coordinate regardless, so
+the question does not come back.
+
+*(The constant is still misnamed — it is the project's site location, not a sunrise input. That is
+cosmetic and remains open.)*
+
+**800 mb is the right level, and 700 mb was hiding a real signal (§12.5, §12.7 item 3 — CLOSED).**
+Geopotential height confirms 800 mb sits at ~2035 m, i.e. ~295 m above the 1740 m terrain, versus
+700 mb at ~3100 m. Scored over 321 mornings:
+
+| Wind aloft, 05:00–08:00 | 800 mb (~2035 m) | 700 mb (~3100 m) |
+|---|---|---|
+| 0–10 mph | 25% (n=251) | 37% (n=103) |
+| 10–20 mph | **41%** (n=64) | 28% (n=98) |
+| 20–30 mph | **100%** (n=6) | 24% (n=75) |
+| 30+ mph | — | 29% (n=45) |
+
+Finer bands on 800 mb: 0–8 mph **24%** (n=211), 8–10 **33%**, 10–12 **41%**, 12–15 **59%** (n=17),
+15+ 42% (n=24). Monotonic to 15 mph against a 30% base rate.
+
+**This partially overturns §11.2's "wind aloft is not a positive signal at this site."** That
+conclusion was drawn at 700 mb, where the relationship is genuinely flat — and flat at 3100 m is
+not evidence about 2035 m. At the level that actually sits just above the inversion, more wind is
+*better*, strongly.
+
+⚠️ **But be careful what this is.** At ~295 m above ground, 800 mb is *inside or just above the
+drainage layer itself* (§A.5: jet depth ~400 m AGL; §11.3: lid 40–125 m on a good morning). So
+this is substantially the model **resolving the jet**, not an independent upstream forcing. It is
+a good predictor and a poor explanation, and it must not be read as vindicating "strong flow aloft
+helps" in the §6.2 sense. §11.2's WINDY-ALOFT bucket at 700 mb (17%, the worst) still stands.
+
+**Critically, 800 mb is not pinnable.** `wind_speed_800hPa_previous_day1` is rejected by the API
+outright. So the best signal found to date cannot be used for a night-before call at all.
+
+### 13.2 What can and cannot be pinned to a real forecast run
+
+Open-Meteo exposes `<var>_previous_day1` — the value for a given hour as forecast by the run
+issued a day earlier. For a 6 a.m. target that is a ~24–30 h lead, **longer** than a real 8 p.m.
+decision, so it is a conservative lower bound: anything that survives here would do better at
+8 p.m. Measured availability across the archive:
+
+| Field | Pinnable? |
+|---|---|
+| `wind_speed_10m`, `wind_gusts_10m`, `wind_direction_10m` | ✅ |
+| `temperature_2m`, `dew_point_2m`, `relative_humidity_2m`, `cloud_cover`, `surface_pressure` | ✅ |
+| `cape`, `lifted_index` | ✅ |
+| **`boundary_layer_height` (the lid)** | ❌ **null across the entire archive** |
+| **Any pressure level (`*_800hPa`, `*_700hPa`)** | ❌ rejected by the API |
+
+**The two strongest signals this project has found — the lid (§11.1) and 800 mb wind (§13.1) —
+are exactly the two that cannot be retrieved as a historical night-before forecast.** That is the
+central problem, and it is a data-availability problem rather than a physics one.
+
+### 13.3 The forecast wind signal degrades badly when pinned
+
+| HRRR morning wind | Fresh forecast | Pinned day-ahead |
+|---|---|---|
+| 0–6 mph | **17%** (n=173) | 22% (n=176) |
+| 6–9 | 40% (n=72) | 42% (n=84) |
+| 9–12 | 42% (n=43) | 36% (n=36) |
+| 12–15 | 47% (n=17) | 33% (n=12) |
+| 15–18 | 50% (n=8) | 67% (n=6) |
+| 18+ | **100%** (n=7) | **17%** (n=6) |
+
+The fresh column is monotonic; the pinned column is not. The 18+ band — §10.3's most quotable
+result — **collapses from 100% to 17%**, i.e. from a certainty to below the base rate.
+
+Median disagreement between the day-old and fresh runs is only **1.7 mph** (75th 3.3), which looks
+reassuring and is not: the **max is 29.3 mph**, and the days where the model changes its mind by
+20+ mph are precisely the high-wind days the call depends on. A median computed over 320 mostly
+calm mornings is the wrong statistic for a decision made on the tail.
+
+The low band retains *some* value — 22% against a 30% base rate — but nothing like the 17% that
+made §10.3 look shippable.
+
+### 13.4 No pinnable surface proxy replaces the lid
+
+Each ingredient of radiative cooling, tested alone against 320 mornings (base rate 30%):
+
+| Evening cloud cover | Rate | | Forecast overnight cooling | Rate |
+|---|---|---|---|---|
+| 0–15% | 39% (n=79) | | <5 °F | **41%** (n=76) |
+| 15–40% | 33% (n=36) | | 5–10 °F | 36% (n=122) |
+| 40–70% | 25% (n=59) | | 10–15 °F | **16%** (n=80) |
+| 70–100% | 25% (n=146) | | 15+ °F | 17% (n=42) |
+
+Dewpoint spread and relative humidity were flat (26–33% and 23–34% across all bands).
+
+Cloud cover works weakly and in the expected direction. **Overnight cooling runs backwards** —
+more forecast cooling means *fewer* rideable mornings, 41% at <5 °F against 16% at 10–15 °F. That
+directly contradicts the naive reading of Appendix A.1, and it contradicts §11.3, where 2026-08-10
+cooled 18.3 °F and was excellent.
+
+Two candidate explanations, neither tested: strong surface cooling may indicate a **decoupled,
+stagnant** cold pool rather than a draining one; or large forecast cooling may simply flag calm,
+clear, high-pressure nights where nothing drives the flow. **Do not use this variable in either
+direction until that is resolved** — a signal whose sign you cannot explain is exactly what §9
+says to distrust.
+
+### 13.5 The full result — and it does not ship
+
+Three configurations, same 321 mornings, same PACK/MAYBE/SLEEP-IN rule shape:
+
+| Configuration | SLEEP IN rate | Sessions lost to SLEEP IN |
+|---|---|---|
+| Fresh wind + fresh lid (**what §11.4 measured**) | **9%** | **11%** |
+| Pinned wind + fresh lid (isolates forecast staleness) | 16% | 21% |
+| **Pinned wind + pinnable proxies (a real night-before call)** | **23%** | **35%** |
+
+The attribution is clean and roughly even: **staleness alone takes the cost from 11% to 21%, and
+losing the lid takes it from 21% to 35%.** Both matter; neither alone explains it.
+
+And the fully-pinned PACK bucket is **25% rideable against a 30% base rate** — the confident
+bucket is *worse than random*.
+
+**Verdict, applying §7 rule 6: this does not ship.** A SLEEP IN call that costs 35% of sessions is
+precisely the failure §2 says is most expensive — it is a suppressing call, made confidently,
+wrong more than a third of the time. §11.4's "skip SLEEP IN nights, lose 12% of sessions" was
+substantially an artifact of scoring a near-analysis as though it were a forecast.
+
+### 13.6 In-season only (Mar–Oct, per §4.5b)
+
+Restricting to the months the user will actually ride: **255 mornings, 77 rideable, 30% base
+rate** — the base rate is unchanged, so the dilution worry in §4.5b turns out not to bite here.
+The fully-pinned call performs the same: PACK 33% (n=9), MAYBE 34% (n=138), SLEEP IN **25%**
+(n=108), costing **35%** of in-season sessions. **The conclusion is not an artifact of scoring
+months he does not ride.**
+
+### 13.7 What this changes, and the one clear way forward
+
+- ❌ **The night-before call is not currently buildable.** §11.4 and §11.5's optimism are
+  withdrawn. §10.6's "a night-before push is justified by 10.3" is **no longer supported**.
+- ✅ **§11's physics survives intact.** The lid really is the strongest signal (67% at <60 m
+  versus 15% at 400+ m, unchanged). The problem is purely that Open-Meteo will not serve it as a
+  day-ahead forecast, and 800 mb strengthens rather than weakens the picture.
+- ✅ **The fix is collection, not modelling.** The lid and 800 mb are unavailable *historically*
+  but are perfectly available *going forward*. Archiving tomorrow's HRRR forecast each evening —
+  the exact pattern `archive-holfuy.mjs` already uses for a perishable source — builds a true
+  night-before dataset at ~1 row/day. A shoulder season (Sep–Oct) would give a first read; a full
+  Mar–Oct season would be decisive.
+- ⏸️ **The alarm (§10.4) is unaffected but now unsupported.** Its arming gate was the HRRR
+  night-before wind that just failed. An ungated alarm is ~5 wakes/week (§10.1) and should not be
+  built.
+
+**The honest position: this project can currently tell you what the wind is doing (§7.1, 0% missed
+at zero lead) and explain why after the fact (§11.2). It cannot yet tell you the night before.**
+The route to that is now a specific, cheap, mechanical piece of collection rather than another
+modelling attempt.
+
+- [ ] Build the forward HRRR forecast archiver (lid, 800 mb wind, 10 m wind, cloud, at a pinned
+      issue time). Highest-value open item in the project.
+- [ ] Resolve the inverted sign on forecast overnight cooling (§13.4) before it is used anywhere.
+
+---
+
+## 14. The lid IS pinnable — and lead time turns out not to be the problem (2026-08-10)
+
+Two hypotheses were tested here. **One data claim in §13 was wrong and is corrected. One new
+hypothesis of mine was wrong and is withdrawn.** Both are recorded in full, per §9.
+
+Scripts: `DEBUG-pinned-lid-pilot.mjs`, `DEBUG-lead-time-curve.mjs`.
+Pre-registration: `research/preregistration-2026-08-10.md`, written **before** any number below
+was computed.
+
+### 14.1 CORRECTION to §13.2 — the lid *can* be pinned, from a different endpoint
+
+§13.2 states the lid "cannot be pinned" and §13.7 concludes the only way forward is collecting
+forward for a season. **That is true of the API §13 used and false as a general claim.**
+
+| Open-Meteo product | `boundary_layer_height` | `wind_speed_800hPa` |
+|---|---|---|
+| `previous-runs-api`, `_previous_day1` — **what §13 used** | ❌ 0/120 non-null | ❌ rejected outright |
+| **`single-runs-api`, `run=<date>T00:00`** | ✅ **49/168 non-null** | ❌ 0/168 null |
+| Raw NOAA GRIB (`noaa-hrrr-bdp-pds`) | ✅ `HPBL:surface` | ✅ `UGRD`/`VGRD:800 mb` |
+
+`single-runs-api.open-meteo.com` returns any HRRR run by init time, back to **2026-04-02**.
+Run `<D>T00:00` begins at local 18:00 on D−1, so the morning of D at 05–08 local is f11–f14 — the
+forecast genuinely in hand at an 8 p.m. decision.
+
+**So the strongest signal in the project has now been scored as a real forecast**, which §13
+believed impossible. 800 mb remains unavailable there and still needs GRIB.
+
+### 14.2 The pre-registered test — FAILS on safety
+
+131 labelled Soda mornings from 2026-04-02 (130 scored, one run unavailable and correctly
+**excluded rather than recorded as calm**, §4.2). Base rate **21.5%** — lower than the 30%
+full-year figure, because this window is Apr–Aug only. The **published §11.4 rule was reused
+verbatim**, so this test added no new researcher degrees of freedom.
+
+| Endpoint | Result | Bar | |
+|---|---|---|---|
+| `sessions_lost` | **17.9%** (5/28), 95% CI [4.5%, 33.3%] | ≤10%, CI upper ≤20% | ❌ **FAIL** |
+| `dead_suppressed` | 57.8%, CI [48.4%, 67.3%] | ≥30% | ✅ PASS |
+| `pack_precision` | 53.3% (n=15), CI [26.7%, 81.3%] | ≥45% | ✅ PASS |
+
+Continuous lid: **ROC-AUC 0.680**, PR-AUC 0.364 against a 0.215 base, LOO Brier 0.1646.
+
+**Verdict: UNSAFE.** Per §7 rule 6 and the pre-registration, this does not advance.
+
+The lid gradient is nonetheless real and monotonic (descriptive only):
+
+| Forecast lid | Rideable |
+|---|---|
+| 100–250 m | 26.2% (n=65) |
+| 250–400 m | 18.8% (n=16) |
+| **400+ m** | **8.8%** (n=34) |
+
+So the signal exists; the *rule* is what fails. It suppresses 58% of dead mornings but sleeps
+through 1 session in 6, and §2 says that is the expensive error.
+
+### 14.3 The lead-time hypothesis — TESTED AND WITHDRAWN
+
+While planning this work I claimed §13 failed because `_previous_day1` (~24 h) exceeded HRRR's
+range, so the model "wasn't resolving the drainage at all." **That was wrong on the facts:**
+HRRR's 00/06/12/18Z runs extend to **48 h** (`hrrr.t12z.wrfsfcf48.grib2` returns 200; only
+off-cycle runs stop at 18 h). §13 scored a legitimate in-range forecast.
+
+The weaker surviving claim — that skill improves materially between ~24 h and the ~11–14 h
+actionable lead — was then tested properly: **same product, same mornings, same frozen rule, only
+the run varies.** This is the paired comparison §13.3 lacked.
+
+| Run | Lead | `sessions_lost` | `dead_supp` | PACK prec | **ROC-AUC** |
+|---|---|---|---|---|---|
+| 00Z same date — **actionable** | ~11–14 h | 17.9% (5/28) | 57.0% | 53.3% (n=15) | **0.685** |
+| 12Z prev day — diagnostic | ~23–26 h | 17.9% (5/28) | 50.0% | 37.5% (n=8) | 0.654 |
+| 00Z prev day — diagnostic | ~35–38 h | 17.9% (5/28) | 52.0% | 80.0% (n=5) | 0.651 |
+
+n=128 paired mornings, 21.9% base rate.
+
+**The curve is flat.** ROC-AUC moves 0.651 → 0.685 across a 24-hour spread in lead, which is well
+inside noise at 28 positives, and `sessions_lost` is *identical* at all three. **Lead time is not
+what is limiting this problem.** The hypothesis is withdrawn.
+
+(The 80% PACK precision at 35 h is n=5 and is noise. It is exactly the kind of small-n cell §13's
+"100% → 17%" headline was built from, and it should not be quoted either.)
+
+### 14.4 What this changes
+
+- ✅ **§13.2's "cannot be pinned" is corrected**, and §13.7's "the fix is collection, not
+  modelling" is now only half right: the lid needed a *different endpoint*, not a season of waiting.
+- ❌ **The lead-time explanation for §13's failure is dead.** §13's negative result stands, and it
+  is not an artifact of forecast staleness.
+- ⛔ **The raw NOAA GRIB pipeline is NOT justified on this evidence.** Its two selling points were
+  shorter lead (now shown not to help) and 800 mb (still untested, but the prior is much weaker).
+  This is the main practical saving: the expensive path was ruled out in an afternoon, for free.
+- ✅ **The forward collector is still worth building**, and now has a specific quantity to track:
+  ROC-AUC ≈ 0.68 on the pinned lid, and whether a lid-based SLEEP-IN rule can be made safe.
+- ⚠️ **One season, 28 positives, Apr–Aug only.** §4.7 applies with force. This pilot was always
+  better powered to kill an idea than to bless one, and that is what it did.
+
+### 14.5 Exploratory only — not a result
+
+Post-hoc lid thresholds, listed because they inform what the forward collector should watch.
+**These were chosen after seeing the outcome and are not a test of anything.**
+
+| SLEEP IN iff lid ≥ T | `sessions_lost` | `dead_suppressed` |
+|---|---|---|
+| 300 m | 14.3% (4/28) | 39.2% |
+| 400 m | 10.7% (3/28) | 30.4% |
+| 500 m | 3.6% (1/28) | 20.6% |
+
+A high-threshold, lid-only rule trades suppression for safety roughly as expected, and nothing
+here clears the pre-registered bar honestly. **It must be validated on mornings not used above** —
+i.e. the forward season, or pre-April history if the GRIB pipeline is ever built.
+
+- [x] ~~Build the forward HRRR collector against `single-runs-api`~~ → §14.6. Built.
+- [x] ~~Test whether §13 failed because of forecast lead time~~ → §14.3. It did not.
+- [ ] Re-score §14.5's thresholds on held-out mornings once the forward collector has a season.
+      **Not before.** Every morning currently in the archive was used to pick those numbers.
+
+### 14.6 The forward collector (built 2026-08-10)
+
+`scripts/archive-hrrr-forecast.mjs` captures the 00Z run's forecast for the coming morning and
+writes it to the `hrrr_forecasts` table in Neon. The 2026-04-02 → 2026-08-10 window is backfilled,
+so the archive opens at **130 mornings / 520 rows**.
+
+This is the only work in this section that produces new information, and it produces it at exactly
+one morning per day. Nothing about §14's negative results changes that — if anything they raise its
+value, because the surviving ideas in §14.5 are all post-hoc and can only be tested on mornings
+that do not yet exist.
+
+Design points worth keeping:
+
+- **Rows are keyed by `run_init`, not just valid time.** §13 could not distinguish "the model was
+  wrong" from "the model was asked too early." §14.3 could only settle that because the run was
+  explicit. A forecast row without its init time is not worth writing.
+- **A failed fetch writes nothing.** Per §4.2, absence of data is not absence of wind. A missing
+  run stays missing so the next run retries it, rather than being silently recorded as a calm
+  morning — which is the same failure class as the winter-shutdown bug in `schema.sql`.
+- **Retries with backoff.** The 00Z run publishes ~00:50 UTC and the job fires at 01:30 UTC;
+  firing near publication is inherently racy, so transient errors back off and retry, while a
+  genuine *"model run is not available"* gives up immediately.
+- `timezone=America/Denver` is passed to the API, so DST is handled upstream rather than by hand.
+  This is deliberate — §9.1 records a local-time bug that once collapsed the base rate.
+
+⚠️ **Scheduling requires the default branch.** `.github/workflows/katabatic-forecast.yml` is
+written but **inert on a research branch** — GitHub fires `schedule` and `workflow_dispatch` only
+for workflows on a repository's default branch. Until the research repo exists, the collector must
+be run by hand, and **every day it is not run is a morning that can never be recovered.**

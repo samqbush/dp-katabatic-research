@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+
+# Derived forecast caches. Regenerable from the API, and the durable copy lives
+# in the hrrr_forecasts table in Neon.
+scripts/.pinned-lid-cache.json
+scripts/.lead-curve-cache.json
+
+# Local archive backups (scripts/backup-archive.mjs)
+backups/
+*.dump
+
+coverage/
+.DS_Store
