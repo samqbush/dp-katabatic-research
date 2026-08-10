@@ -76,7 +76,7 @@ scripts/           archive jobs, backtest, and the shared libraries they share
 scripts/db/        Neon Postgres schema and migrations
 scripts/DEBUG-*    one-off analyses; each produced a section of the research log
 __tests__/         guard rails, mostly against lookahead leakage
-.github/workflows/ the nightly forecast capture
+.github/workflows/ the two nightly jobs: forecast capture and archive refresh
 ```
 
 ## Running it
@@ -88,15 +88,35 @@ npm run db:schema         # create tables
 npm run check             # tests, DST, timezone sweep, workflow lint
 ```
 
-Day to day:
+Day to day this is now automated — two nightly jobs, both writing to Neon:
+
+| Workflow | When | What it records |
+|---|---|---|
+| `katabatic-forecast.yml` | 01:30 UTC | what the model **predicted** for the coming morning |
+| `katabatic-archive.yml` | 20:00 UTC | what actually **happened** |
+
+Neither is useful alone. The project accrues value only as matched forecast/outcome pairs.
+
+To run any of it by hand:
 
 ```bash
 npm run archive:ecowitt   # pull recent station history into the archive
 npm run archive:forecast  # capture the 00Z model run for tomorrow morning
+npm run refresh           # the full archive ritual: fetch, re-label, re-score
 npm run backtest          # re-score the rule against everything on record
 ```
 
 Requires Node 20+ and a Postgres connection string (`NEON_DATABASE_URL`).
+
+### Why the archive job is scheduled, not manual
+
+The data is perishable. Ecowitt keeps 5-minute rows for about 90 days, then coarsens them to
+4-hour rows that cannot resolve a 30-minute wind event. Worse, the Holfuy ridge-top station
+publishes a rolling **~5.9-day** window with no backfill at all — a day missed by a week is not
+degraded, it is gone, and no source ever had it. That window is why this runs daily.
+
+Re-running is always safe: observations are immutable and inserted `ON CONFLICT DO NOTHING`, so
+days are unioned by timestamp. Resolution only improves; nothing already captured is dropped.
 
 ## The long game
 

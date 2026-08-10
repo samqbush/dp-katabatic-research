@@ -1,0 +1,58 @@
+# Nightly refresh of the katabatic research archive.
+#
+# The forecast job records what the model PREDICTED. This one records what actually HAPPENED.
+# Neither is worth anything alone — the project accrues value only as matched forecast/outcome
+# pairs, one morning per day.
+#
+# ⚠️ This data is perishable, which is why it is scheduled rather than run by hand:
+#   - Ecowitt serves 5-minute rows for ~90 days, then coarsens to 4-hour rows that cannot resolve
+#     a 30-minute sustained-wind event (§4.3a).
+#   - Holfuy (Lookout Mtn) publishes a rolling ~5.9-day window with NO backfill and no reachable
+#     archive endpoint. A Holfuy day missed by a week is not degraded, it is GONE.
+#
+# The Holfuy window is what sets the daily cadence. A weekly job would already be too slow.
+#
+# Re-running is always safe: observations are immutable and inserted ON CONFLICT DO NOTHING, so
+# days are unioned by timestamp. Resolution only ever improves and no captured minute is dropped.
+name: Katabatic archive refresh
+
+on:
+  schedule:
+    # 20:00 UTC = 14:00 MDT. Late enough that the katabatic morning (roughly 05:00–09:00 local)
+    # is complete and in the archive; the remainder of the day is picked up by tomorrow's run,
+    # which re-fetches a 14-day window anyway.
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Lookback window in days (default 14; widen after time away)'
+        required: false
+        default: '14'
+
+concurrency:
+  group: katabatic-archive
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Refresh archive
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          ECOWITT_RESEARCH_API_KEY: ${{ secrets.ECOWITT_RESEARCH_API_KEY }}
+          ECOWITT_RESEARCH_APPLICATION_KEY: ${{ secrets.ECOWITT_RESEARCH_APPLICATION_KEY }}
+          ECOWITT_MAC_DP_SODA_LAKES: ${{ secrets.ECOWITT_MAC_DP_SODA_LAKES }}
+          ECOWITT_MAC_DP_STANDLEY_WEST: ${{ secrets.ECOWITT_MAC_DP_STANDLEY_WEST }}
+          ECOWITT_MAC_DP_BOULDER_RES: ${{ secrets.ECOWITT_MAC_DP_BOULDER_RES }}
+        run: node scripts/katabatic-refresh.mjs --days "${{ inputs.days || '14' }}"

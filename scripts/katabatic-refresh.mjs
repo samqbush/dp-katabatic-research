@@ -7,11 +7,16 @@
  * (§4.3a), which are useless for a 30-minute sustained-wind label. Every day this is not run is
  * a day closer to losing resolution that cannot be recovered from any source.
  *
- * It replaces a scheduled GitHub Actions workflow deliberately: this is local research on an
- * unpushed branch, so a CI job that commits and pushes would be actively wrong.
- *
  * Steps: report staleness -> archive missing days -> re-label -> re-score -> summarise what
  * changed. Safe to run as often as you like; the archiver is idempotent.
+ *
+ * This also runs nightly in CI (`.github/workflows/katabatic-archive.yml`). It once carried a
+ * note that it *deliberately* replaced a scheduled workflow, because the research lived on an
+ * unpushed branch and a job that commits and pushes would have been actively wrong. Both halves
+ * of that reasoning are gone: the research has its own repository with a default branch (which
+ * is what GitHub requires to fire a schedule at all), and the archive writes to Neon rather than
+ * to files, so nothing needs to be committed. Running it by hand meant the Holfuy window — ~5.9
+ * days, no backfill — depended on somebody remembering.
  *
  *   node scripts/katabatic-refresh.mjs
  *   node scripts/katabatic-refresh.mjs --days 30     # wider catch-up after time away
