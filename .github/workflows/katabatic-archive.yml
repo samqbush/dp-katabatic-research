@@ -56,3 +56,60 @@ jobs:
           ECOWITT_MAC_DP_STANDLEY_WEST: ${{ secrets.ECOWITT_MAC_DP_STANDLEY_WEST }}
           ECOWITT_MAC_DP_BOULDER_RES: ${{ secrets.ECOWITT_MAC_DP_BOULDER_RES }}
         run: node scripts/katabatic-refresh.mjs --days "${{ inputs.days || '14' }}"
+
+      # Neon is the only live copy of data that cannot be re-fetched, so every run leaves a
+      # restorable dump attached to itself. Retention is 90 days (the GitHub maximum), which makes
+      # this a rolling disaster-recovery window, NOT an archive: a dump older than 90 days is
+      # deleted automatically. Long-term copies still have to be pulled down deliberately.
+      - name: Install PostgreSQL client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-18
+        # The runner image ships an older client, and pg_dump refuses to dump from a server newer
+        # than itself. backup-archive.mjs finds /usr/lib/postgresql/18/bin/pg_dump on its own and
+        # hard-fails if the majors still do not line up, so a future Neon upgrade surfaces loudly
+        # here rather than silently skipping backups.
+
+      # Runs even when the refresh step failed: archive-holfuy.mjs deliberately exits non-zero
+      # after a partial write, and those already-written days are exactly what needs saving.
+      - name: Back up archive
+        if: '!cancelled()'
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        # stations is dumped schema-only: its ecowitt_mac values come from the secrets above, and
+        # this repo is public, so artifact downloads are unauthenticated. The rows are rebuilt by
+        # scripts/db/apply-schema.mjs from scripts/lib/stations.mjs plus those secrets.
+        run: |
+          node scripts/backup-archive.mjs --out "$RUNNER_TEMP/archive-backup" \
+            --exclude-table-data stations
+
+      # A truncated dump looks like a backup until the day someone needs it. pg_restore --list
+      # parses the archive's table of contents, so a corrupt file fails here and not in a crisis.
+      # The versioned binary is deliberate: an older pg_restore rejects a newer dump, which would
+      # make this step fail for a reason that has nothing to do with the dump's integrity.
+      - name: Verify dump is restorable
+        if: '!cancelled()'
+        run: |
+          dump=$(ls -1 "$RUNNER_TEMP/archive-backup"/*.dump | head -1)
+          /usr/lib/postgresql/18/bin/pg_restore --list "$dump" > /tmp/toc.txt
+          grep -q 'TABLE DATA public observations' /tmp/toc.txt \
+            || { echo "::error::dump has no observations data"; exit 1; }
+          if grep -q 'TABLE DATA public stations' /tmp/toc.txt; then
+            echo "::error::dump contains stations rows; ecowitt_mac must not reach a public artifact"
+            exit 1
+          fi
+          echo "✅ $(basename "$dump") restorable, observations present, stations rows excluded"
+
+      - name: Upload dump artifact
+        if: '!cancelled()'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dp-archive-dump-${{ github.run_id }}
+          path: ${{ runner.temp }}/archive-backup/*.dump
+          retention-days: 90
+          if-no-files-found: error

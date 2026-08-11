@@ -1,15 +1,18 @@
 ---
 name: dp-katabatic-archive
 description: >
-  Refresh and maintain the local katabatic wind research archive for the DP Ecowitt stations,
-  then re-score the prediction rule against it. Use this skill whenever the user wants to update,
+  Refresh and maintain the katabatic wind research archive in Neon for the DP Ecowitt and Holfuy
+  stations, then re-score the prediction rule against it. Use this skill whenever the user wants
+  to update,
   refresh, backfill, or check the state of the wind data archive — including "refresh the
   katabatic archive", "update the wind data", "run the daily archive", "run the weekly archive",
   "backfill the meter history", "how far behind is the archive", "re-run the backtest", "re-score
   the katabatic
   rule", "how is the wind research looking", "did we get any new rideable mornings", or any
   request to pull down recent Ecowitt history for research rather than for a go/no-go call. Also
-  trigger when the user returns from travel and wants to catch the data up, asks whether they
+  trigger when the user asks whether the nightly archive automation or scheduled workflows are
+  running, healthy, or failing, when they ask about backing up the archive, when the user returns
+  from travel and wants to catch the data up, asks whether they
   are losing data resolution, or asks what the archive currently says about monthly or seasonal
   wind patterns. Do NOT use this for "should I go to the lake this morning" — that is
   dp-katabatic-check.
@@ -144,12 +147,21 @@ node scripts/archive-holfuy.mjs
 
 ## When to run it
 
-**Daily is the target cadence**, driven by the Holfuy window rather than by Ecowitt. Also run it
-whenever the user gets back from travel, or before any question that leans on the data ("what's
-the best month", "how often does September work").
+**Daily is the target cadence**, driven by the Holfuy window rather than by Ecowitt — and the
+nightly workflow now covers that baseline. So the manual run is no longer the routine path; it is
+what you reach for when the schedule cannot be trusted or has not caught up yet:
 
-Re-running the same day is harmless but pointless for Ecowitt. It is *not* pointless for Holfuy
-if the user has been away — run it immediately in that case, before anything else.
+- **Archive status shows real lag** — anything past a day or two means the cron is not doing its
+  job. Diagnose *and* fetch; do not just report the number.
+- **The user is back from travel** and wants the data caught up now rather than at 20:00 UTC.
+- **Before any question that leans on the data** ("what's the best month", "how often does
+  September work"), so the answer is not one silent cron failure out of date.
+- **Anything urgent involving Holfuy**, where waiting for the next scheduled run could cross the
+  ~5.9-day cliff.
+
+Always check status before assuming the schedule worked. Re-running the same day is harmless but
+pointless for Ecowitt. It is *not* pointless for Holfuy if the user has been away — run it
+immediately in that case, before anything else.
 
 ## Reading the output
 
@@ -193,15 +205,29 @@ averages, or estimates. The entire value of this archive is that absence is reco
 **Holfuy data is now scored, but nothing about it is validated.** `scripts/analyze-lookout.mjs`
 runs automatically as part of the refresh and writes `research/lookout-log.csv`. It deliberately
 **refuses to print AUC below n=30** — at single-digit n the statistic is noise, and quoting it is
-how a hunch becomes a remembered finding. Get the current N by querying the database — e.g.
-`SELECT count(*) FROM station_days d JOIN stations s ON s.id = d.station_id WHERE s.slug =
-'lookout-mtn'` — rather than quoting a number from here; this file has been stale before.
+how a hunch becomes a remembered finding. Get the current N by querying the database rather than
+quoting a number from here; this file has been stale before:
+
+```bash
+node -e "import('./scripts/lib/db.mjs').then(async m=>{
+  const r = await m.query(\"SELECT status, count(*) n, min(local_date) mn, max(local_date) mx FROM station_days WHERE station_slug='lookout-mtn' GROUP BY status\");
+  console.table(r.rows); process.exit(0);})"
+```
+
+Note the schema: `station_days` keys on `station_slug`, and there is no `station_id` column to
+join `stations` on.
 
 **There is no shipped Lookout go/no-go rule, and users may believe there is.** The hypothesis is
 a specific claim from a local rider — *"20+ mph sustained with 30+ gusts, after midnight, steady
-out of West-ish, then it's a GO"* — recorded verbatim in §8.1. As of 2026-08-02 it has n=8: fires
-5 times, right 3, **missed zero sessions** against a 29.4% base rate. That is promising and it is
-**not** validation. If asked what the ridge implies, give the current §8.1 numbers with the n
+out of West-ish, then it's a GO"* — recorded verbatim in §8.1. When last analysed on 2026-08-02
+it had n=8: fires 5 times, right 3, **missed zero sessions** against a 29.4% base rate. That is
+promising and it is **not** validation.
+
+**Those §8.1 figures are now behind the data.** The archive holds more Lookout days than the
+analysis was run on (17 days as of 2026-08-11), because the nightly workflow keeps collecting
+while §8.1 is written by hand. Quote §8.1 *with its 2026-08-02 date attached*, or re-run the
+analysis and report the fresh numbers — never present the old numbers as current, and never
+silently edit §8.1 to match a new run without redoing the analysis behind it. If asked what the ridge implies, give the current §8.1 numbers with the n
 attached, and do not improvise a threshold or round the sample up into a recommendation.
 
 Three things to keep straight when discussing it:
@@ -229,29 +255,73 @@ completed. Completeness is now judged by whether `fetched_at` is later than the 
 day, so partial days are re-fetched once and then settle. A day being re-fetched that looks like
 it was already there is this working as intended, not a bug.
 
-**This archive is maintained by hand, through this skill. There is no automation.** A scheduled
-workflow was built and then deliberately removed: GitHub only fires `schedule` events on the
-**default branch**, and this research lives on the `katabatic-research` branch. That made the
-original branch-local cron unworkable.
+**Collection is automated as of 2026-08-10. Verify before you assert either way.** Two scheduled
+workflows run on `main`:
 
-**Do not repeat the stronger claim that automation is impossible — it is not.** A workflow living
-on `main` can `actions/checkout` with `ref: katabatic-research` and run the same command, and the
-archive now lives in Neon, so a runner would not need to commit anything back to the branch at
-all. Automation was **descoped, not ruled out** — and the user keeps collection manual as a
-standing preference, not because of a technical blocker. Respect that, and do not push to
-automate it.
+| Workflow | Cron (UTC) | What it records |
+|---|---|---|
+| `.github/workflows/katabatic-archive.yml` | `0 20 * * *` | What actually **happened** — the same `katabatic-refresh.mjs` this skill runs, over a 14-day window |
+| `.github/workflows/katabatic-forecast.yml` | `30 1 * * *` | What the model **predicted** — the HRRR forecast for the coming morning |
 
-**Say this plainly if the user assumes it is running automatically.** And weigh it against the
-Holfuy window above: every day nobody runs the command is a Holfuy day permanently lost. If the
-archive status shows the Holfuy station more than ~4 days behind, treat that as urgent and run
-the fetch before doing anything else the user asked for.
+The project accrues value only as matched forecast/outcome pairs, so both matter. Both take
+`workflow_dispatch`, and the archive job accepts a `days` input to widen the window after time
+away.
+
+This became workable because the archive moved to Neon: a runner writes to the database and needs
+to commit nothing back. The earlier blocker — GitHub only fires `schedule` events on the
+**default branch**, while this research once lived on a `katabatic-research` branch — is gone now
+that the work is on `main`.
+
+**Automation does not mean unattended.** Check it rather than assuming, because a silently broken
+cron is worse than a known-manual one — it produces confident staleness. Confirm with:
+
+```bash
+gh run list --workflow katabatic-archive.yml --limit 5
+```
+
+Treat as suspect: any `failure`, or a gap where a nightly run simply did not appear. GitHub's
+scheduler also drifts, often by an hour or more, and drops runs entirely under load — so a late
+run is normal, a missing one is not. The Holfuy window is the thing that punishes you: it is
+~5.9 days wide with no backfill, so roughly **five consecutive skipped runs lose ridge data
+permanently.** If archive status shows Holfuy more than ~4 days behind, treat it as urgent and
+run the fetch by hand before anything else the user asked for — do not wait for the next cron.
+
+Running the command by hand is still always safe and is the right move whenever the schedule is
+in doubt, since observations are immutable and re-runs are no-ops.
 
 **A fetch produces no git diff — there is nothing to commit.** The archive is in Neon, not on the
 branch. If you go looking for changed files to confirm the run worked, you will find none and
-wrongly conclude it failed. Instead, run `npm run archive:backup` after a successful fetch: that
-`pg_dump` is the only second copy of the data. Offer it as the checkpoint. Any code or research
-changes still commit to `katabatic-research`; do not push or merge to `main` unless the user
-explicitly asks.
+wrongly conclude it failed. Instead, read the run's own summary, and run `npm run archive:backup`:
+that `pg_dump` is the only second copy of the data. Code and research changes commit to `main`;
+push only when the user asks.
+
+**Every nightly run now attaches its own backup.** The archive workflow dumps Neon after the
+refresh and uploads it as a `dp-archive-dump-<run_id>` artifact, kept for 90 days (GitHub's
+maximum). Grab one with:
+
+```bash
+gh run download <run-id> -n dp-archive-dump-<run-id>
+pg_restore --clean --if-exists -d "$NEON_DATABASE_URL" dp-archive-*.dump
+```
+
+Two things about those artifacts:
+
+- **They are a rolling 90-day window, not an archive.** Every dump is deleted on its 90th day, so
+  corruption nobody notices for a quarter outstrips every copy. Periodic local dumps
+  (`npm run archive:backup` → `~/dp-archive-backups/`) are still the long-term copy, and are not
+  automated. Offer one if the newest file there is more than a week or two old:
+
+  ```bash
+  ls -lt ~/dp-archive-backups/ | head
+  ```
+
+- **The CI dump omits `stations` rows on purpose.** This repo is public, so artifact downloads are
+  unauthenticated, and `stations.ecowitt_mac` comes from GitHub secrets. The dump carries the
+  table's schema but none of its rows; `scripts/db/apply-schema.mjs` rebuilds them from
+  `scripts/lib/stations.mjs` plus the MAC env vars. A restore from a CI artifact therefore needs
+  that re-seed step, while a local `npm run archive:backup` dump is complete and does not.
+  **Never drop `--exclude-table-data stations` from the workflow**, and never extend the flag to
+  `observations`, `station_days`, or `hrrr_forecasts` — those are the irreplaceable part.
 
 ## Answering questions from the archive
 

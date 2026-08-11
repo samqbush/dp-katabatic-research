@@ -49,6 +49,14 @@ Backup the Neon katabatic archive to a local pg_dump custom-format file.
   --out <dir>       Where to write the dump. Default: ${DEFAULT_OUT_DIR}
   --pg-dump <path>  Use a specific pg_dump binary instead of the one on PATH.
                     Also settable via the PG_DUMP environment variable.
+  --exclude-table-data <table>
+                    Dump this table's schema but none of its rows. Repeatable.
+                    Used by the CI backup for "stations", whose ecowitt_mac column
+                    is held in GitHub secrets and must not land in an artifact on a
+                    public repo. Costs nothing to omit: station rows are rebuilt
+                    from scripts/lib/stations.mjs plus the MAC env vars by
+                    scripts/db/apply-schema.mjs. Never exclude observations,
+                    station_days, or hrrr_forecasts — those are the irreplaceable part.
   --help            Show this.
 
 Requires NEON_DATABASE_URL in .env or the environment, and a pg_dump whose major
@@ -59,7 +67,12 @@ Restore with:
 `.trim();
 
 function parseArgs(argv) {
-  const args = { out: DEFAULT_OUT_DIR, pgDump: process.env.PG_DUMP || null, help: false };
+  const args = {
+    out: DEFAULT_OUT_DIR,
+    pgDump: process.env.PG_DUMP || null,
+    excludeTableData: [],
+    help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     if (argv[i] === '--help' || argv[i] === '-h') args.help = true;
@@ -70,6 +83,10 @@ function parseArgs(argv) {
     if (argv[i] === '--pg-dump') {
       if (!next) throw new Error('--pg-dump needs a path to a pg_dump binary.');
       args.pgDump = next;
+    }
+    if (argv[i] === '--exclude-table-data') {
+      if (!next) throw new Error('--exclude-table-data needs a table name.');
+      args.excludeTableData.push(next);
     }
   }
   return args;
@@ -232,11 +249,19 @@ async function resolvePgDump(requested, serverMajor) {
   );
 }
 
-function runPgDump(binary, outFile, env) {
+function runPgDump(binary, outFile, env, excludeTableData = []) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(
       binary,
-      ['--format=custom', '--compress=9', '--no-owner', '--no-privileges', '--file', outFile],
+      [
+        '--format=custom',
+        '--compress=9',
+        '--no-owner',
+        '--no-privileges',
+        ...excludeTableData.map((table) => `--exclude-table-data=${table}`),
+        '--file',
+        outFile,
+      ],
       { env: { ...process.env, ...env }, stdio: ['ignore', 'inherit', 'pipe'] }
     );
 
@@ -285,10 +310,13 @@ async function main() {
 
   console.log(`📦 Backing up ${label}`);
   console.log(`   server pg ${serverMajor}, client pg ${pgDump.major} (${pgDump.binary})`);
+  if (args.excludeTableData.length) {
+    console.log(`   schema-only (no rows) for: ${args.excludeTableData.join(', ')}`);
+  }
   console.log(`   -> ${outFile}`);
 
   try {
-    await runPgDump(pgDump.binary, outFile, env);
+    await runPgDump(pgDump.binary, outFile, env, args.excludeTableData);
   } catch (err) {
     // A failed dump leaves a truncated file behind, which is worse than no file: it looks like a
     // backup until the day someone tries to restore it.
