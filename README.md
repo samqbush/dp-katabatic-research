@@ -108,7 +108,9 @@ calls, invoke the live wind meters, or send an alarm.
 The publisher runs after either collector completes and at 02:45/20:45 UTC as a fallback. It updates
 the configured Discussion only when the rendered body changed. `KATABATIC_DISCUSSION_NUMBER` must be
 set as an Actions repository variable; a missing variable, empty report, missing stored prediction,
-or mismatched Discussion title fails closed. A `NEON_DATABASE_URL_RO` secret is preferred when a
+or mismatched Discussion title fails closed. `KATABATIC_DISCUSSIONS_TOKEN` is a repository secret
+containing a token with permission to update Discussions; GitHub's built-in workflow token cannot
+currently perform that GraphQL mutation. A `NEON_DATABASE_URL_RO` secret is preferred when a
 read-only Neon role is available, otherwise the existing `NEON_DATABASE_URL` secret is used.
 
 To preview without changing GitHub:
