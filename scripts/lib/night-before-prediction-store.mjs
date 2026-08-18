@@ -28,6 +28,24 @@ export function summarizeForecastRows(rows) {
   };
 }
 
+export async function findNightBeforePrediction({
+  stationSlug,
+  localDate,
+  runInit,
+  modelVersion = EXPERIMENTAL_PROBABILITY_MODEL_V1.modelVersion,
+}) {
+  const { rows } = await query(
+    `SELECT *
+     FROM night_before_predictions
+     WHERE station_slug = $1
+       AND local_date = $2
+       AND run_init = $3
+       AND model_version = $4`,
+    [stationSlug, localDate, runInit, modelVersion],
+  );
+  return rows[0] ?? null;
+}
+
 async function registerModel() {
   if (modelRegistered) return;
   const model = EXPERIMENTAL_PROBABILITY_MODEL_V1;

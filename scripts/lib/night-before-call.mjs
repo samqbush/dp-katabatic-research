@@ -7,6 +7,7 @@
  */
 
 export const FORWARD_HOLDOUT_START = '2026-08-11';
+export const MIN_NIGHT_BEFORE_FORECAST_HOURS = 3;
 
 export const EXPERIMENTAL_PROBABILITY_MODEL_V1 = Object.freeze({
   modelVersion: 'wind-lid-logistic-v1',
@@ -49,11 +50,11 @@ export function experimentalNightBeforeCall({ avgWindMph, avgLidM, forecastHours
     !Number.isFinite(wind)
     || !Number.isFinite(lid)
     || !Number.isInteger(forecastHours)
-    || forecastHours < 3
+    || forecastHours < MIN_NIGHT_BEFORE_FORECAST_HOURS
   ) {
     return {
       call: null,
-      reason: 'fewer than 3 usable HRRR hours',
+      reason: `fewer than ${MIN_NIGHT_BEFORE_FORECAST_HOURS} usable HRRR hours`,
     };
   }
 
@@ -154,7 +155,7 @@ export function experimentalSuccessChance(model, forecast) {
     !model
     || !forecast
     || !Number.isInteger(forecast.forecastHours)
-    || forecast.forecastHours < 3
+    || forecast.forecastHours < MIN_NIGHT_BEFORE_FORECAST_HOURS
   ) return null;
   const wind = Number(forecast.avgWindMph);
   const lid = Number(forecast.avgLidM);

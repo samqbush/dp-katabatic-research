@@ -23,18 +23,15 @@
  *   node scripts/archive-hrrr-forecast.mjs --from 2026-04-02 --to 2026-08-10   # backfill
  */
 
-import axios from 'axios';
 import { query, closePool } from './lib/db.mjs';
+import { collectHrrrMorning, fetchHrrrMorning } from './lib/hrrr-forecast.mjs';
 import {
+  findNightBeforePrediction,
   persistNightBeforePrediction,
   summarizeForecastRows,
 } from './lib/night-before-prediction-store.mjs';
 
-const SITE = { lat: 39.646115, lon: -105.174958 }; // true meter coordinate (§12.2)
 const SLUG = 'dp-soda-lakes';
-const API = 'https://single-runs-api.open-meteo.com/v1/forecast';
-const WINDOW_HOURS = [5, 6, 7, 8];
-const MAX_ATTEMPTS = 4;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -57,56 +54,6 @@ function shift(iso, n) {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Fetch one morning. Retries transient failures; a genuinely unavailable run returns null so the
- * caller writes NOTHING. Per §4.2 a missing run must stay missing rather than be recorded as calm.
- */
-async function fetchMorning(date) {
-  const run = `${date}T00:00`;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      const res = await axios.get(API, {
-        params: {
-          latitude: SITE.lat, longitude: SITE.lon,
-          hourly: 'boundary_layer_height,wind_speed_10m',
-          models: 'gfs_hrrr', run,
-          timezone: 'America/Denver', wind_speed_unit: 'mph',
-        },
-        timeout: 60000,
-      });
-      const h = res.data.hourly;
-      const rows = [];
-      for (let i = 0; i < h.time.length; i++) {
-        const [d, t] = h.time[i].split('T');
-        if (d !== date) continue;
-        const hr = parseInt(t.slice(0, 2), 10);
-        if (!WINDOW_HOURS.includes(hr)) continue;
-        const lid = h.boundary_layer_height[i];
-        const wind = h.wind_speed_10m[i];
-        if (!Number.isFinite(lid) && !Number.isFinite(wind)) continue;
-        rows.push({ hr, lid, wind });
-      }
-      return rows.length ? rows : null;
-    } catch (e) {
-      const reason = e.response?.data?.reason || e.message;
-      // A run that does not exist will never exist. Retrying it is pointless.
-      if (/not available/i.test(reason)) {
-        console.log(`  ${date}: run unavailable — nothing written`);
-        return null;
-      }
-      if (attempt === MAX_ATTEMPTS) {
-        console.log(`  ${date}: failed after ${MAX_ATTEMPTS} attempts (${reason}) — nothing written`);
-        return null;
-      }
-      // The 00Z run publishes ~00:50Z; firing early is the expected failure, so back off properly.
-      const wait = 30000 * attempt;
-      console.log(`  ${date}: attempt ${attempt} failed (${reason}), retrying in ${wait / 1000}s`);
-      await sleep(wait);
-    }
-  }
-  return null;
-}
-
 async function store(date, rows) {
   const runInit = `${date}T00:00:00Z`;
   const fetchedAt = new Date().toISOString();
@@ -115,16 +62,33 @@ async function store(date, rows) {
       `INSERT INTO hrrr_forecasts
          (station_slug, local_date, run_init, valid_hour_local, lid_m, wind_mph, fetched_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (station_slug, local_date, run_init, valid_hour_local) DO UPDATE
-         SET lid_m = EXCLUDED.lid_m,
-             wind_mph = EXCLUDED.wind_mph,
-             fetched_at = EXCLUDED.fetched_at`,
+         ON CONFLICT (station_slug, local_date, run_init, valid_hour_local) DO UPDATE
+           SET lid_m = COALESCE(hrrr_forecasts.lid_m, EXCLUDED.lid_m),
+               wind_mph = COALESCE(hrrr_forecasts.wind_mph, EXCLUDED.wind_mph),
+               fetched_at = EXCLUDED.fetched_at
+         WHERE hrrr_forecasts.lid_m IS NULL OR hrrr_forecasts.wind_mph IS NULL`,
       [SLUG, date, runInit, r.hr,
        Number.isFinite(r.lid) ? r.lid : null,
        Number.isFinite(r.wind) ? r.wind : null,
        fetchedAt],
     );
   }
+}
+
+async function loadStored(date) {
+  const runInit = `${date}T00:00:00Z`;
+  const { rows } = await query(
+    `SELECT valid_hour_local AS hr, lid_m AS lid, wind_mph AS wind
+     FROM hrrr_forecasts
+     WHERE station_slug = $1
+       AND local_date = $2
+       AND run_init = $3
+       AND lid_m IS NOT NULL
+       AND wind_mph IS NOT NULL
+     ORDER BY valid_hour_local`,
+    [SLUG, date, runInit],
+  );
+  return rows;
 }
 
 /* ---------------------------------------------------------------------- main */
@@ -151,29 +115,49 @@ if (from && to) {
 
 console.log(`HRRR forecast collector — ${targets.length} morning(s), station ${SLUG}`);
 
-let written = 0, skipped = 0;
+let written = 0, alreadyIssued = 0, skipped = 0;
 for (const date of targets) {
-  const rows = await fetchMorning(date);
-  if (!rows) { skipped++; continue; }
-  await store(date, rows);
-  const prediction = await persistNightBeforePrediction({
-    stationSlug: SLUG,
-    localDate: date,
-    runInit: `${date}T00:00:00Z`,
+  const runInit = `${date}T00:00:00Z`;
+  const result = await collectHrrrMorning({
+    date,
     generationMode,
-    forecast: summarizeForecastRows(rows),
+    findIssuedPrediction: () => findNightBeforePrediction({
+      stationSlug: SLUG,
+      localDate: date,
+      runInit,
+    }),
+    loadStoredRows: () => loadStored(date),
+    storeRows: (rows) => store(date, rows),
+    persistRows: (rows) => persistNightBeforePrediction({
+      stationSlug: SLUG,
+      localDate: date,
+      runInit,
+      generationMode,
+      forecast: summarizeForecastRows(rows),
+    }),
+    fetchMorning: fetchHrrrMorning,
   });
+
+  if (result.status === 'already-issued') {
+    alreadyIssued++;
+    console.log(
+      `  ${date}: prediction already issued (${result.prediction.model_version}) — no-op`,
+    );
+    continue;
+  }
+  if (result.status === 'unresolved') {
+    skipped++;
+    continue;
+  }
+
+  const { rows, prediction } = result;
   written++;
   const lid = rows.map((r) => (Number.isFinite(r.lid) ? r.lid.toFixed(0) : '—')).join('/');
   console.log(`  ${date}: ${rows.length} hours, lid ${lid} m`);
-  if (prediction) {
-    console.log(
-      `             ${prediction.call}, ${prediction.success_chance_percent}% success ` +
-      `(${prediction.model_version}, ${prediction.generation_mode})`,
-    );
-  } else {
-    console.log('             no prediction — fewer than 3 complete HRRR hours');
-  }
+  console.log(
+    `             ${prediction.call}, ${prediction.success_chance_percent}% success ` +
+    `(${prediction.model_version}, ${prediction.generation_mode}, ${result.source})`,
+  );
   if (targets.length > 1) await sleep(220);
 }
 
@@ -181,7 +165,7 @@ const { rows: total } = await query(
   'SELECT count(*)::int AS n, count(DISTINCT local_date)::int AS days FROM hrrr_forecasts WHERE station_slug = $1',
   [SLUG],
 );
-console.log(`\nwritten ${written}, skipped ${skipped}`);
+console.log(`\nwritten ${written}, already issued ${alreadyIssued}, skipped ${skipped}`);
 console.log(`archive now holds ${total[0].n} rows across ${total[0].days} mornings`);
 
 await closePool();
@@ -189,10 +173,10 @@ await closePool();
 // A run that captures nothing must FAIL, not pass quietly. Per §4.2 a morning that is not
 // captured is gone for good, so a silently green no-op is the worst possible outcome: it looks
 // like the archive is accruing when it is not, and the gap is only discovered a season later.
-if (written === 0) {
+if (written === 0 && alreadyIssued === 0) {
   console.error(
-    '\n❌ Nothing was captured. This is a failure, not a quiet skip — the morning is unrecoverable.\n' +
-    '   If this fired before the 00Z run published (~00:50 UTC), re-run it; otherwise investigate.',
+    '\n❌ No usable 00Z snapshot was captured or already issued.\n' +
+    '   Keep this run red; the later recovery schedule may still capture it before the outcome.',
   );
   process.exit(1);
 }

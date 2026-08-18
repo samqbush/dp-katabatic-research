@@ -15,8 +15,14 @@ on:
     # 01:30 UTC = 19:30 MDT the previous evening. The 00Z run publishes ~00:50 UTC, so this is
     # ~40 min after publication, and it is also roughly when the go/no-go decision gets made.
     - cron: '30 1 * * *'
+    # Recovery for delayed Open-Meteo ingestion. Existing issued predictions are a green no-op.
+    # 04:00 UTC = 22:00 MDT / 21:00 MST the previous evening.
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
+      date:
+        description: 'Single morning (YYYY-MM-DD), optional'
+        required: false
       from:
         description: 'Backfill start (YYYY-MM-DD), optional'
         required: false
@@ -45,10 +51,25 @@ jobs:
       - name: Collect forecast
         env:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DATE: ${{ inputs.date }}
+          INPUT_FROM: ${{ inputs.from }}
+          INPUT_TO: ${{ inputs.to }}
         run: |
-          if [ -n "${{ inputs.from }}" ] && [ -n "${{ inputs.to }}" ]; then
+          if [ -n "$INPUT_DATE" ] && { [ -n "$INPUT_FROM" ] || [ -n "$INPUT_TO" ]; }; then
+            echo "::error::date cannot be combined with from/to"
+            exit 1
+          elif { [ -n "$INPUT_FROM" ] && [ -z "$INPUT_TO" ]; } ||
+               { [ -z "$INPUT_FROM" ] && [ -n "$INPUT_TO" ]; }; then
+            echo "::error::from and to must be provided together"
+            exit 1
+          elif [ -n "$INPUT_DATE" ]; then
+            node --no-warnings scripts/archive-hrrr-forecast.mjs --date "$INPUT_DATE"
+          elif [ -n "$INPUT_FROM" ]; then
             node --no-warnings scripts/archive-hrrr-forecast.mjs \
-              --from "${{ inputs.from }}" --to "${{ inputs.to }}"
+              --from "$INPUT_FROM" --to "$INPUT_TO"
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            node --no-warnings scripts/archive-hrrr-forecast.mjs --date "$(date -u +%F)"
           else
             node --no-warnings scripts/archive-hrrr-forecast.mjs
           fi
