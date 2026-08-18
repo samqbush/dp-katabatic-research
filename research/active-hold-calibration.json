@@ -1,0 +1,184 @@
+{
+  "generatedAt": "2026-08-18T16:08:15.806Z",
+  "threshold": 15,
+  "minGroupSize": 15,
+  "overall": {
+    "n": 76,
+    "gate": {
+      "n": 76,
+      "above": 58,
+      "rate": 0.7631578947368421
+    },
+    "gatePlus30": {
+      "n": 76,
+      "above": 46,
+      "rate": 0.6052631578947368
+    },
+    "gatePlus60": {
+      "n": 63,
+      "above": 35,
+      "rate": 0.5555555555555556
+    },
+    "duration": {
+      "observedCount": 65,
+      "censoredCount": 11,
+      "unknownDueToGap": 0,
+      "medianMinutes": 45,
+      "p25Minutes": 15,
+      "p75Minutes": 135,
+      "minObservedMinutes": 0,
+      "maxObservedMinutes": 165,
+      "minCensoredMinutes": 165
+    }
+  },
+  "byGateHour": {
+    "6": {
+      "n": 45,
+      "gate": {
+        "n": 45,
+        "above": 36,
+        "rate": 0.8
+      },
+      "gatePlus30": {
+        "n": 45,
+        "above": 30,
+        "rate": 0.6666666666666666
+      },
+      "gatePlus60": {
+        "n": 45,
+        "above": 27,
+        "rate": 0.6
+      },
+      "duration": {
+        "observedCount": 42,
+        "censoredCount": 3,
+        "unknownDueToGap": 0,
+        "medianMinutes": 35,
+        "p25Minutes": 15,
+        "p75Minutes": 100,
+        "minObservedMinutes": 0,
+        "maxObservedMinutes": 165,
+        "minCensoredMinutes": 165
+      }
+    },
+    "7": {
+      "n": 18,
+      "gate": {
+        "n": 18,
+        "above": 16,
+        "rate": 0.8888888888888888
+      },
+      "gatePlus30": {
+        "n": 18,
+        "above": 11,
+        "rate": 0.6111111111111112
+      },
+      "gatePlus60": {
+        "n": 18,
+        "above": 8,
+        "rate": 0.4444444444444444
+      },
+      "duration": {
+        "observedCount": 14,
+        "censoredCount": 4,
+        "unknownDueToGap": 0,
+        "medianMinutes": 135,
+        "p25Minutes": 105,
+        "p75Minutes": 135,
+        "minObservedMinutes": 15,
+        "maxObservedMinutes": 165,
+        "minCensoredMinutes": 165
+      }
+    },
+    "8": {
+      "n": 13,
+      "gate": {
+        "n": 13,
+        "above": 6,
+        "rate": 0.46153846153846156
+      },
+      "gatePlus30": {
+        "n": 13,
+        "above": 5,
+        "rate": 0.38461538461538464
+      },
+      "gatePlus60": {
+        "n": 0,
+        "above": 0,
+        "rate": null
+      },
+      "duration": {
+        "observedCount": 9,
+        "censoredCount": 4,
+        "unknownDueToGap": 0,
+        "medianMinutes": 75,
+        "p25Minutes": 15,
+        "p75Minutes": 135,
+        "minObservedMinutes": 15,
+        "maxObservedMinutes": 165,
+        "minCensoredMinutes": 165
+      }
+    }
+  },
+  "trajectory": {
+    "falling": {
+      "n": 4,
+      "gate": {
+        "n": 4,
+        "above": 3,
+        "rate": 0.75
+      },
+      "gatePlus30": {
+        "n": 4,
+        "above": 2,
+        "rate": 0.5
+      },
+      "gatePlus60": {
+        "n": 4,
+        "above": 2,
+        "rate": 0.5
+      },
+      "duration": {
+        "observedCount": 4,
+        "censoredCount": 0,
+        "unknownDueToGap": 0,
+        "medianMinutes": 20,
+        "p25Minutes": 0,
+        "p75Minutes": 30,
+        "minObservedMinutes": 0,
+        "maxObservedMinutes": 30,
+        "minCensoredMinutes": null
+      }
+    },
+    "notFalling": {
+      "n": 72,
+      "gate": {
+        "n": 72,
+        "above": 55,
+        "rate": 0.7638888888888888
+      },
+      "gatePlus30": {
+        "n": 72,
+        "above": 44,
+        "rate": 0.6111111111111112
+      },
+      "gatePlus60": {
+        "n": 59,
+        "above": 33,
+        "rate": 0.559322033898305
+      },
+      "duration": {
+        "observedCount": 61,
+        "censoredCount": 11,
+        "unknownDueToGap": 0,
+        "medianMinutes": 70,
+        "p25Minutes": 15,
+        "p75Minutes": 135,
+        "minObservedMinutes": 0,
+        "maxObservedMinutes": 165,
+        "minCensoredMinutes": 165
+      }
+    }
+  },
+  "note": "Descriptive, censoring-aware. Each calendar month has one year of evidence — do not treat any month/season-specific rate as validated seasonal generalization. Group rates fall back to the overall rate below n=15."
+}

@@ -52,6 +52,45 @@
         "Still gives an actionable go/no-go rather than suppressing the morning purely because the event is marginal",
         "Assesses the session window against sunrise and the seasonal park gate hour"
       ]
+    },
+    {
+      "id": 4,
+      "name": "versioned-verdict-is-the-baseline",
+      "prompt": "Run the soda check and tell me what you think \u2014 do you agree with the call?",
+      "expected_output": "Runs the bundled script and reads its printed `## VERSIONED VERDICT (call-rule-v1, ...)` block \u2014 the deterministic GO/MARGINAL/NO_GO/STALE verdict, score, and reasons produced by scripts/lib/call-rule.mjs. Treats this printed verdict as the baseline call rather than re-deriving a verdict purely from the AI's own qualitative reading of the five signals. If the AI's own qualitative judgment agrees with the printed verdict, says so explicitly. If it disagrees (for example, a neighbor-penalty point knocked off a morning where \u00a78 says a blowing neighbor should not count against the call), names the disagreement and the reason explicitly rather than silently overriding or silently deferring to either number.",
+      "files": [],
+      "assertions": [
+        "References the script's printed versioned verdict (verdict word and/or numeric score) as the starting point for the call",
+        "Does not present a final verdict that silently contradicts the printed versioned verdict without explanation",
+        "If citing a disagreement between the deterministic score and the qualitative read, explains the specific reason rather than just asserting a different number",
+        "Still delivers one clear, actionable recommendation rather than presenting two verdicts with no resolution"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "active-event-checkpoint-hold-history",
+      "prompt": "It's already blowing over 15 at Soda right now \u2014 how long is this likely to hold? I need it through at least gate+30.",
+      "expected_output": "Runs the bundled script. Because the 30-minute average is already at/above the 15 mph threshold at call time, the script prints an `## ACTIVE-EVENT HOLD HISTORY` block sourced from research/active-hold-calibration.json (scripts/analyze-active-hold.mjs). The response must relay the printed historical checkpoint hold rates (at gate-open, gate+30, gate+60) with their sample sizes, rather than inventing a probability or a duration figure not backed by that data. If the relevant gate-hour group's sample is below the calibration's minimum group size, the response must say the overall active-event rate is being used instead (matching what the script itself reports) rather than presenting a small-sample group rate as if it were well supported. If the calibration file is unavailable, the response must say the historical layer failed rather than guessing a number.",
+      "files": [],
+      "assertions": [
+        "Cites specific historical checkpoint hold rates (gate-open / gate+30 / gate+60) with sample sizes, not an invented probability",
+        "Distinguishes this hold-duration question from the separate go/no-go verdict \u2014 the event is already confirmed active, so the question being answered is 'how long', not 'should I go'",
+        "If the calibration data is missing or the group sample is small, says so plainly rather than presenting an unsupported number with false confidence",
+        "Gives a concrete, time-anchored answer relevant to the user's gate+30 requirement"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "fixed-0545-lead-time-out-of-season",
+      "prompt": "It's early \u2014 like just before 6am in December \u2014 can you check soda and tell me if it's worth waiting for the park to open?",
+      "expected_output": "Recognizes the park gate does not open until 8:00 a.m. in December (Nov\u2013Feb gate hour), so a ~6am call sits roughly 135 minutes ahead of gate-open \u2014 the long-lead, low-confidence bucket the research measures at a much higher missed-session rate than the 15-minute May\u2013Sep case. The response must not present this call with the same confidence as a gate-imminent call, must say plainly this is a long-lead, less-certain read, and must note this is outside the rider's actionable season (Nov\u2013Feb wind is real but not actionable per SKILL.md) while still reporting the live numbers honestly.",
+      "files": [],
+      "assertions": [
+        "Correctly identifies the December park gate as 8:00 a.m., not 6:00 or 7:00",
+        "Explicitly flags the long lead time (~135 minutes) as lower-confidence rather than presenting the call with short-lead certainty",
+        "States plainly that Nov\u2013Feb is outside the actionable riding season even if the wind itself is real",
+        "Reports actual live meter numbers rather than substituting a forecast or refusing to answer"
+      ]
     }
   ]
 }

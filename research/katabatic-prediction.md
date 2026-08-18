@@ -71,7 +71,9 @@ Currently mirrored:
 | Meter sits on the NW point of Big Soda | §4.2 | SKILL.md → Notes |
 | `DECAYING` threshold **±3.0 mph** | §5 / A.3 | `scripts/katabatic-check.mjs` |
 | Season is **Mar–Oct**; Nov–Feb cold-blocked, not just gate-blocked | §4.5b | SKILL.md → "The season: March–October" |
-| Wakes at **gate−30**, every riding day | §1.1 | SKILL.md → "When he is actually standing there: gate−30" |
+| Automation runs at a **fixed 05:45**, every riding day (supersedes the earlier gate−30 belief) | §1.1 | SKILL.md → "When he is actually standing there: gate−30" |
+| Versioned verdict is the live baseline; v2 classifier tested and **not promoted** (§7.1a) | §7.1a | SKILL.md → "The versioned verdict is the baseline" |
+| Active-event checkpoint hold rates (76%/61%/56% at gate/gate+30/gate+60, n=76) | §7.1a | SKILL.md → "The versioned verdict is the baseline" |
 
 The reverse direction is deliberate and should stay that way: the skill carries **conclusions
 only**, never derivations. Appendix A is not mirrored and should not be — see its scope note.
@@ -120,27 +122,36 @@ Two distinct questions hide inside "is it worth going," and they need different 
 
 ### 1.1 The wake-up schedule, stated once so it stops being guessed
 
-The user wakes **30 minutes before the park gate opens**, every riding day:
+> ⚠️ **CORRECTED 2026-08-18.** This section previously asserted the user checks at a *variable*
+> gate−30 (5:30 in summer, 6:30 in Mar/Apr/Oct) and that the call should be re-scored at that
+> gate-relative time. That has been superseded by the user's own confirmed setup: **local
+> automation runs `/dp-katabatic-check` at a FIXED 05:45 Colorado time, every morning, regardless
+> of season.** The gate−30 framing below is kept for historical context (it explains the
+> now-resolved checklist item at the end of this subsection) but is no longer how the call is
+> timed or scored. §7.1a has the re-scored 05:45 results this correction produced.
 
-| Months | Gate | Wake |
-|---|---|---|
-| May–Sep | 6:00 | **5:30** |
-| Mar, Apr, Oct | 7:00 | **6:30** |
-| Nov–Feb | 8:00 | *(does not ride — §4.5b)* |
+Historical framing — the user was previously believed to wake **30 minutes before the park gate
+opens**, every riding day:
 
-Three consequences, all of which correct things written elsewhere in this document:
+| Months | Gate | (superseded) wake time | Actual lead time at the real fixed 05:45 call |
+|---|---|---|---|
+| May–Sep | 6:00 | 5:30 | **15 min** |
+| Mar, Apr, Oct | 7:00 | 6:30 | **75 min** |
+| Nov–Feb | 8:00 | *(does not ride — §4.5b)* | 135 min |
 
-1. **Lead time is a constant ~30 minutes across the whole season.** He is always in §7.1's
-   "0–60 min ahead" bucket (**27.8% missed**) and **never** in the 90+ minute bucket (50% missed).
-2. **§7.1's cool-season degradation is an artifact of the experiment, not a fact about his
-   mornings.** That backtest scored a *fixed* 06:30 call, which against an 8:00 winter gate is a
-   90-minute-ahead call nobody would ever make. §7.1 says so itself — *"season is a proxy for lead
-   time"* — but the conclusion has been read seasonally ever since.
-3. **The rule has never been scored at gate−30 uniformly**, which is the only call time that
-   describes what actually happens. Every headline number in §7.1 is for a call he does not make.
+The gate−30 belief, if it had been true, would have made lead time a near-constant ~30 minutes
+all season. **It is not true of the actual automation.** A fixed 05:45 clock time means lead time
+to gate varies by season exactly as much as the gate hour does — 15 minutes in the easy May–Sep
+case, 75–135 minutes the rest of the (riding) season. §7.1a's re-scored numbers show this
+variation is large and real (6.7% missed at 15 min lead vs 38–42% at 75/135 min), which is the
+opposite of the old "he's never in the long-lead bucket" conclusion this subsection used to draw.
 
-- [ ] Re-score the backtest at a gate-relative call time (gate−30) instead of fixed clock times.
-      Cheap, uses existing data, and it is the number that describes his actual mornings.
+- [x] ~~Re-score the backtest at a gate-relative call time (gate−30) instead of fixed clock
+      times.~~ **Done differently and more accurately (2026-08-18, §7.1a):** re-scored at the
+      user's actual fixed 05:45 automation time instead, since that turned out to be the real
+      call time, not a gate-relative one. The lead-time variation this surfaces is now an explicit,
+      versioned part of the live skill's own output (`.github/skills/dp-katabatic-check/scripts/
+      katabatic-check.mjs`), not a guess.
 
 ---
 
@@ -844,12 +855,13 @@ This is not a different finding — it is the same one. Nov–Feb the gate opens
 a 06:30 call is forced to forecast 90+ minutes ahead. Warm months open at 05:00–06:00, where the
 call sits inside the window. **Season is a proxy for lead time, not an independent effect.**
 
-> ⚠️ **And therefore this table does not describe the user's mornings at all (added 2026-08-10).**
-> He wakes at **gate−30 in every month** (§1.1), so his lead time is a constant ~30 minutes and he
-> is permanently in the "0–60 min ahead" row (27.8% missed). The cool-season row above exists only
-> because the backtest held the call time fixed at 06:30 — a call nobody makes in a month when the
-> gate opens at 08:00. **Do not quote the cool-season degradation as something he experiences.**
-> The backtest needs re-scoring at a gate-relative call time (§1.1 open item).
+> ⚠️ **Superseded 2026-08-18 — see §7.1a.** This blockquote assumed a gate−30 wake-up that turned
+> out not to describe reality: the user's actual automation is a **fixed 05:45** call every
+> morning, not a gate-relative one. §7.1a re-scores the whole backtest at that real call time and
+> finds the lead-time effect is *worse* than this paragraph implied, not absent — 15/75/135-minute
+> lead buckets replace the 06:30/0-60/90+ framing below, and out-of-season (Nov–Feb) months really
+> do sit in a long-lead bucket at the real call time. Treat this paragraph as historical context
+> for why the re-score happened, not as the current numbers.
 
 Chinook contamination (§6.2) was checked first, per the label-poisoning concern: only 5 of 45
 cool-season positives show the >15 °F warming signature (2025-10-19, 2025-11-19, 2025-12-14,
@@ -878,6 +890,165 @@ not in the rule's weights, it is in the absence of any variable that *leads* the
 That means §5's Tier 2/3 (synoptic gradient, 700 mb flow, soil moisture) is no longer optional
 polish; it is the only route to answering Q2. Tuning `call-rule.mjs` further would be fitting
 noise on 91 positives (§4.7).
+
+---
+
+## 7.1a RESULT — re-scored at the actual 05:45 automation time (2026-08-18)
+
+> 🔗 **SHIPPED** — `.github/skills/dp-katabatic-check/scripts/katabatic-check.mjs` now computes
+> and prints this section's `call-rule-v1` verdict live, and persists it via
+> `scripts/lib/prediction-log-store.mjs`. Reproduce the tables below with:
+> `node scripts/backtest-katabatic.mjs && node scripts/score-backtest.mjs --rule-version call-rule-v1`
+> (default `--call-time` is now 05:45, matching the real automation) and
+> `node scripts/analyze-active-hold.mjs` for the checkpoint-hold table.
+
+§7.1's 06:30 headline was scored at a clock time nobody actually uses. §1.1 records why: the
+belief that the user checks at a variable gate−30 turned out to be wrong — he confirmed the real
+automation runs `/dp-katabatic-check` at a **fixed 05:45 every morning, in every month**. This
+section re-scores the identical backtest population (324 observed mornings) at that real call
+time, freezing the transcribed rule and features as `call-rule-v1`/`features-v1` (§7 rule 2) so
+this number stays reproducible.
+
+### Headline (call time 05:45, n=324, base rate 30.6%)
+
+| Strategy | Missed sessions | False alarms | Precision |
+|---|---|---|---|
+| always go | **0.0%** | 100.0% | 30.6% |
+| never go | 100.0% | **0.0%** | n/a |
+| persistence (same as yesterday) | 58.3% | 25.6% | 41.2% |
+| **call rule v1** | **25.3%** (25 of 99) | **28.9%** (65 of 225) | **53.2%** |
+
+Same relative shape as §7.1's 06:30 number — v1 beats persistence badly on the axis that matters
+(missed sessions) at a somewhat worse false-alarm rate — but the absolute missed-session rate is
+worse than 06:30's 20.7%, because 05:45 is, for two of the three lead-time buckets below, further
+from gate-open than 06:30 was.
+
+### In-season vs out-of-season, at the real 05:45 call
+
+| Season | n | Rideable | Missed | False alarm |
+|---|---|---|---|---|
+| In-season (Mar–Oct) | 262 | 81 | **22.2%** | 29.3% |
+| Out-of-season (Nov–Feb) | 62 | 18 | **38.9%** | 27.3% |
+
+Unlike §7.1's version of this split, this one is **not** an experimental artifact — Nov–Feb
+really is a long-lead call at the real 05:45 time (135 minutes ahead of the 8:00 gate, see below),
+and the degradation is real. It does not change what ships: §4.5b already rules out Nov–Feb
+riding on cold, independent of this finding.
+
+### Lead time from 05:45 to gate-open — replaces the stale 06:30/0-60/90+ table
+
+| Lead time | Gate hour | n | Rideable | Missed | False alarm |
+|---|---|---|---|---|---|
+| **15 min** before gate | 6:00 (May–Sep) | 171 | 45 | **6.7%** | 37.3% |
+| **75 min** before gate | 7:00 (Mar/Apr/Oct) | 91 | 36 | **41.7%** | 10.9% |
+| **135 min** before gate | 8:00 (Nov–Feb) | 62 | 18 | **38.9%** | 27.3% |
+
+This is the number that actually describes the user's mornings, and it is worse news than §1.1
+used to claim: he is **not** permanently in a short-lead bucket. May–Sep (6:00 gate) is the easy
+case — 05:45 is only 15 minutes ahead and the rule barely misses anything. But Mar/Apr/Oct (7:00
+gate) and Nov–Feb (8:00 gate) put the real automation 75 and 135 minutes ahead of gate-open, and
+both buckets land in the same 40%-ish missed-session territory that §7.1 flagged as "a coin flip."
+**Lead time, not season, is still the effect** — it is just distributed differently across the
+season than the old gate−30 belief assumed.
+
+Practical read: the live skill's own printed lead time (`minutes_until_gate`) should carry a
+visibly lower-confidence framing whenever it exceeds ~60 minutes, i.e. essentially every Mar/Apr/
+Oct and Nov–Feb morning, not only the old "90+ minutes" case. `SKILL.md` Step 4 was rewritten to
+match.
+
+### v2 classifier — tested, and it does NOT clear the promotion bar
+
+`scripts/lib/call-rule-v2.mjs` corrected one piece of known drift in the neighbor signal: v1
+subtracts a point from the go/no-go score when a neighbor station is also blowing hard
+(`ratio > 0.9`), even though §2 of `SKILL.md` (station correlation) shows a blowing neighbor
+*raises* the odds of a rideable Soda morning (75% vs 26%), not lowers them. v2 removes the
+subtraction — a blowing neighbor floors at 0 rather than going negative — and adds a rolling
+percent-over-threshold trajectory feature. Both rules were backtested in parallel, paired
+per-morning, at the same 05:45 call time:
+
+| Rule | Missed sessions | False alarms | Precision |
+|---|---|---|---|---|
+| call-rule-v1 (frozen baseline) | 25.3% (25/99) | **28.9%** (65/225) | 53.2% |
+| call-rule-v2 (corrected neighbor signal) | 25.3% (25/99) | 29.3% (66/225) | 52.9% |
+
+**Zero misses recovered, and one additional false alarm.** Per the promotion criteria (this
+document's implementation plan, and mirrored in `SKILL.md`), v2 needed to either recover a miss
+without meaningfully increasing false alarms, or cut false alarms without adding a miss. It did
+neither — it is a net regression by one false alarm, driven entirely by one morning:
+
+**2026-04-18, 05:45 call.** A real but weak katabatic signal (avg30 10.5 mph, direction locked
+288° at 100% consistency, but well under the 15 mph threshold and already flagged `HOLDING`).
+Removing the neighbor subtraction pushed this one morning's score from v1's `NO_GO` (score 0) to
+v2's `MARGINAL` (score 1) — flipping a correctly-called flat morning (`label=false`, not rideable)
+into a false alarm. v1's now-known-incorrect neighbor penalty happened to cancel out on this
+specific morning; v2's theoretically-correct fix did not help elsewhere in the 324-morning sample.
+
+**Verdict: documented, not shipped (§7 rule 6).** The corrected neighbor logic is more defensible
+in isolation — it matches the station-correlation finding in `SKILL.md` §2 — but "more defensible
+in isolation" is not the promotion bar, and an inconclusive/negative real-data result is a
+legitimate outcome to record rather than paper over. `call-rule-v1` remains the live-scoring rule.
+The live skill script still prints v2's trajectory feature descriptively (fading vs. not), because
+that framing is useful advice regardless of which rule scores the go/no-go call — it just does not
+drive the verdict.
+
+### Active-event checkpoint hold analysis (censoring-aware, n=76)
+
+Separate population from the go/no-go classifier above: mornings where the 30-minute average at
+05:45 was **already** at or above the 15 mph threshold — the event is running, and the question
+is not "is it real" but "will it still be there at the gate." 76 archived mornings qualify.
+
+Fixed operational checkpoints — was the wind still above threshold at gate-open, gate+30, and
+gate+60 minutes?
+
+| Checkpoint | n | Still above threshold | Rate |
+|---|---|---|---|
+| Gate-open | 76 | 58 | **76.3%** |
+| Gate+30 min | 76 | 46 | **60.5%** |
+| Gate+60 min | 63 | 35 | **55.6%** |
+
+(`gate+60`'s smaller n is mornings where the observation window itself ended before gate+60 could
+be checked — reported as a smaller denominator, not folded into the rate.)
+
+By gate hour (season) — reported separately per §7 rule 3, never pooled:
+
+| Gate hour | n | Gate-open rate | Gate+30 rate | Gate+60 rate | Median duration from 05:45 |
+|---|---|---|---|---|---|
+| 6:00 (May–Sep) | 45 | 80.0% | 66.7% | 60.0% | +35 min (p25 +15, p75 +100) |
+| 7:00 (Mar/Apr/Oct) | 18 | 88.9% | 61.1% | 44.4% | +135 min (p25 +105, p75 +135) |
+| 8:00 (Nov–Feb) | 13 | 46.2% | 38.5% | n/a (n=0 observed) | +75 min (p25 +15, p75 +135) |
+
+Full event-end duration, all 76 mornings pooled, **censoring-aware** — events still running at the
+end of the observation window are reported as right-censored, not averaged in as if they ended
+there:
+
+- 65 observed endings, 11 right-censored (still above threshold when the observation window
+  closed — a **lower bound** on their true duration, not a data point about when they ended).
+- Median observed-or-censored duration from the 05:45 call: **+45 minutes**, 25th percentile
+  **+15 min**, 75th percentile **+135 min**.
+- The 8:00-gate group's small n (13, and 0 with an observed gate+60 checkpoint) falls back to
+  the overall 76-mornings rate per `pickGroupOrOverall` (§7 rule per the promotion criteria,
+  minimum group size 15) rather than presenting an unreliable small-sample figure — this is what
+  the live skill script does automatically when it reads `research/active-hold-calibration.json`.
+
+A falling percent-over-threshold trajectory (n=4, too small to trust on its own) showed a lower
+gate-open hold rate (75% vs 76.4% not-falling) and a much shorter median duration (+20 min vs
++70 min) — consistent with the intuition that a declining trend shortens the expected window, but
+per the promotion criteria this **only changes the wording, never the go/no-go call itself**, and
+n=4 is far too small to calibrate a number from.
+
+### What this changes in the live skill
+
+- `.github/skills/dp-katabatic-check/scripts/katabatic-check.mjs` now computes and prints the
+  versioned `call-rule-v1` verdict as the actual baseline call (previously the AI made an
+  untracked judgment call after reading raw numbers).
+- When an event is already running (avg30 ≥ threshold), the script prints the gate-hour-specific
+  checkpoint hold rates and sample sizes above, falling back to the overall 76-morning rate below
+  n=15, instead of the AI inventing a hold estimate.
+- Every live call is now persisted with its feature version, rule version, verdict, and score via
+  the atomic upsert log store (§7.2/§7 rule per the plan), fixing a defect where the previous
+  logger recorded features but left `verdict`/`score` empty.
+- v2 remains research-only. Its trajectory feature is shown descriptively; its go/no-go score is
+  not used.
 
 ---
 

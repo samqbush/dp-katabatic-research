@@ -202,7 +202,19 @@ async function main() {
 
   console.log('\n## RE-LABELLING AND SCORING\n');
   await run('backtest-katabatic.mjs', ['--out', join(REPO_ROOT, 'research', 'prediction-log.csv')]);
-  await run('score-backtest.mjs', ['--call-time', '06:30']);
+  // 05:45 is the actual automated call time (the user's local automation runs the live skill
+  // then, every riding morning) — not 06:30, which was a disconnected number nothing else in the
+  // pipeline calls at.
+  await run('score-backtest.mjs', ['--call-time', '05:45', '--rule-version', 'call-rule-v1']);
+  await run('score-backtest.mjs', ['--call-time', '05:45', '--rule-version', 'call-rule-v2']);
+
+  console.log('\n## RECONCILING LIVE PREDICTION LOG\n');
+  try {
+    await run('reconcile-live-log.mjs');
+  } catch (err) {
+    console.log(`⚠️  Live log reconciliation failed: ${err.message}`);
+    console.log('   Archive is unaffected; outcomes will fill in on the next successful refresh.');
+  }
 
   // Ridge-flow accumulation. This is an OPEN QUESTION (§8.1) and feeds nothing — it exists so the
   // Lookout hypothesis is settled by data rather than by how convincing it sounds. Runs quiet

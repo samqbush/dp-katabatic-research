@@ -19,9 +19,13 @@
  * on recall — it is competing on how many pointless early alarms it removes *while* missing
  * essentially nothing. That, and only that, is the value on offer.
  *
+ * Defaults to the actual automated call time, 05:45 Colorado, and to rule_version=call-rule-v1.
+ * A prior version of this scorer defaulted to 05:30, which nothing in the pipeline ever actually
+ * calls at — that was a disconnected number, not a baseline.
+ *
  * Usage:
  *   node scripts/score-backtest.mjs
- *   node scripts/score-backtest.mjs --call-time 05:30
+ *   node scripts/score-backtest.mjs --call-time 05:45 --rule-version call-rule-v2
  */
 
 import { readFile } from 'fs/promises';
@@ -29,15 +33,24 @@ import { join } from 'path';
 import { REPO_ROOT } from './lib/ecowitt.mjs';
 import { parseCsv } from './lib/prediction-log.mjs';
 import { verdictToBinary } from './lib/call-rule.mjs';
+import { RULE_VERSION_V1 } from './lib/versions.mjs';
+import { gateOpenHour } from './lib/season.mjs';
 
 const DEFAULT_LOG = join(REPO_ROOT, 'research', 'prediction-log.csv');
 
+// 05:45 is the actual automated call time (the user's local automation runs the live skill at
+// 05:45 Colorado time every riding morning) — NOT 06:30 (an old explicit refresh argument) and
+// NOT 05:30 (this scorer's old, disconnected default). Scoring at any other time answers a
+// different, hypothetical question.
+const ACTUAL_CALL_TIME = '05:45';
+
 function parseArgs(argv) {
-  const args = { callTime: '05:30', log: DEFAULT_LOG };
+  const args = { callTime: ACTUAL_CALL_TIME, log: DEFAULT_LOG, ruleVersion: RULE_VERSION_V1 };
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     if (argv[i] === '--call-time' && next) args.callTime = next;
     if (argv[i] === '--log' && next) args.log = next;
+    if (argv[i] === '--rule-version' && next) args.ruleVersion = next;
   }
   return args;
 }
@@ -95,27 +108,38 @@ async function main() {
 
   const rows = parseCsv(text)
     .filter((r) => r.call_time === args.callTime)
+    .filter((r) => (r.rule_version ?? RULE_VERSION_V1) === args.ruleVersion)
     // An empty label means unobserved. It must never be coerced to false (§4.2).
     .filter((r) => r.label === 'true' || r.label === 'false')
     .sort((a, b) => a.date.localeCompare(b.date));
 
   if (!rows.length) {
-    console.error(`❌ No scorable rows at call time ${args.callTime}.`);
+    console.error(`❌ No scorable rows at call time ${args.callTime} for rule_version=${args.ruleVersion}.`);
     process.exit(1);
   }
 
-  const days = rows.map((r) => ({
-    date: r.date,
-    month: r.date.slice(0, 7),
-    actual: r.label === 'true',
-    verdict: r.verdict,
-    predicted: verdictToBinary(r.verdict),
-  }));
+  const days = rows.map((r) => {
+    const [y, m] = r.date.split('-').map(Number);
+    const gate = gateOpenHour(new Date(y, m - 1, 1));
+    // §4.5b: the rider's season is March–October (the months the gate opens at 6 or 7am, not
+    // 8am). At the fixed 05:45 call time this maps directly to lead time before gate-open.
+    const inSeason = m >= 3 && m <= 10;
+    const leadMinutes = gate === 6 ? 15 : gate === 7 ? 75 : 135;
+    return {
+      date: r.date,
+      month: r.date.slice(0, 7),
+      actual: r.label === 'true',
+      verdict: r.verdict,
+      predicted: verdictToBinary(r.verdict),
+      inSeason,
+      leadMinutes,
+    };
+  });
 
   const baseRate = days.filter((d) => d.actual).length / days.length;
 
   console.log('='.repeat(94));
-  console.log(`BACKTEST SCORING — call time ${args.callTime}, ${days.length} observed mornings`);
+  console.log(`BACKTEST SCORING — call time ${args.callTime}, rule ${args.ruleVersion}, ${days.length} observed mornings`);
   console.log('='.repeat(94));
   console.log(`\n§7 rule 2 — base rate first: ${(baseRate * 100).toFixed(1)}% of observed mornings were rideable`);
   console.log(`   (gate-conditioned: the qualifying window must fall entirely after the park gate opens)`);
@@ -140,12 +164,43 @@ async function main() {
   printMetrics('baseline: always go', alwaysYes);
   printMetrics('baseline: never go', alwaysNo);
   printMetrics('baseline: persistence', persistence);
-  printMetrics('>> call rule v1', rule);
+  printMetrics(`>> ${args.ruleVersion}`, rule);
+
+  // --- In-season (Mar-Oct, the rider's actual season per §4.5b) vs out-of-season, and by the
+  // 05:45 lead time before gate-open. These are two different splits of the SAME dimension (gate
+  // month), reported separately because a single pooled number hides that 05:45 means "15 min
+  // before gate" in summer and "75 min before gate" in shoulder season — very different
+  // reliability per the lead-time table in SKILL.md. ---
+  console.log(`\nIn-season (Mar-Oct) vs out-of-season, at the fixed ${args.callTime} call:\n`);
+  for (const [label, filterFn] of [
+    ['in-season (Mar-Oct)', (d) => d.inSeason],
+    ['out-of-season (Nov-Feb)', (d) => !d.inSeason],
+  ]) {
+    const subset = days.filter(filterFn);
+    if (!subset.length) continue;
+    const m = metrics(subset.map((d) => ({ predicted: d.predicted, actual: d.actual })));
+    console.log(
+      `  ${label.padEnd(24)} n ${String(m.n).padStart(3)}  rideable ${String(m.positives).padStart(2)}  ` +
+        `missed ${pct(m.missedSessionRate)}  false-alarm ${pct(m.falseAlarmRate)}`
+    );
+  }
+  console.log(`\nBy lead time from ${args.callTime} to gate-open:\n`);
+  for (const lead of [...new Set(days.map((d) => d.leadMinutes))].sort((a, b) => a - b)) {
+    const subset = days.filter((d) => d.leadMinutes === lead);
+    const m = metrics(subset.map((d) => ({ predicted: d.predicted, actual: d.actual })));
+    console.log(
+      `  ${String(lead).padStart(3)} min before gate   n ${String(m.n).padStart(3)}  rideable ${String(m.positives).padStart(2)}  ` +
+        `missed ${pct(m.missedSessionRate)}  false-alarm ${pct(m.falseAlarmRate)}`
+    );
+  }
 
   // --- §7 rule 4: hold out by time. Monthly leave-one-out rather than a single split, because
-  // with a few dozen positives one anomalous month in a fixed test set swings the conclusion. ---
+  // with a few dozen positives one anomalous month in a fixed test set swings the conclusion.
+  // NOTE: every calendar month currently has exactly one year of observations, so this measures
+  // whether the rule travels across the available months, NOT proven seasonal generalization —
+  // a second year of data is needed before treating any month-specific rate as validated. ---
   const months = [...new Set(days.map((d) => d.month))].sort();
-  console.log(`\n§7 rule 4 — monthly leave-one-out jackknife (${months.length} months):\n`);
+  console.log(`\n§7 rule 4 — monthly leave-one-out jackknife (${months.length} months, ONE year each — descriptive, not validated):\n`);
   const jack = [];
   for (const month of months) {
     const held = days.filter((d) => d.month === month);

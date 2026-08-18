@@ -17,6 +17,14 @@
  */
 
 import { gateOpenTime } from './season.mjs';
+import { FEATURE_VERSION_V1, RULE_VERSION_V1 } from './versions.mjs';
+
+// This module's exported behavior is FROZEN as `features-v1` / `call-rule-v1` (see
+// scripts/lib/versions.mjs). Corrections and new candidate signals belong in call-rule-v2.mjs,
+// not here — changing this file's math would silently rewrite the meaning of every historical
+// v1 row already scored and documented in research/katabatic-prediction.md.
+export const FEATURE_VERSION = FEATURE_VERSION_V1;
+export const RULE_VERSION = RULE_VERSION_V1;
 
 // Soda Lakes is the only station with a configured ideal (katabatic) direction window.
 // Mirrors app/(tabs)/index.tsx and katabatic-check.mjs.

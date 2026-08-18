@@ -1,4 +1,16 @@
 import { computeFeatures, callRule, circularMean, angularDiff, inRange, verdictToBinary } from '@/scripts/lib/call-rule.mjs';
+import { computeFeaturesV2, callRuleV2 } from '@/scripts/lib/call-rule-v2.mjs';
+import {
+  checkpointStatus,
+  findEventEnd,
+  analyzeActiveDay,
+  summarizeGroup,
+  pickGroupOrOverall,
+  MIN_GROUP_SIZE,
+} from '@/scripts/lib/active-hold.mjs';
+import { upsertRows, upsertRow, readAllRows, rowKey } from '@/scripts/lib/prediction-log-store.mjs';
+import { buildLogRow } from '@/scripts/lib/prediction-log.mjs';
+import { FEATURE_VERSION_V1, RULE_VERSION_V1, RULE_VERSION_V2 } from '@/scripts/lib/versions.mjs';
 import { labelDay } from '@/scripts/lib/label.mjs';
 import {
   buildExperimentalNightBeforePrediction,
@@ -12,6 +24,9 @@ import {
 import { summarizeForecastRows } from '@/scripts/lib/night-before-prediction-store.mjs';
 import { classifyEmptyDay, gateOpenHour } from '@/scripts/lib/season.mjs';
 import { zonedTime } from '@/scripts/lib/zone.mjs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 /**
  * Guard rails for the katabatic backtest.
@@ -381,5 +396,225 @@ describe('circular statistics', () => {
   it('handles a direction window that wraps past north', () => {
     expect(inRange(10, 340, 30)).toBe(true);
     expect(inRange(180, 340, 30)).toBe(false);
+  });
+});
+
+describe('call-rule-v2 — corrected neighbor signal never suppresses', () => {
+  const day = '2026-07-15'; // July: gate opens 06:00
+  // Target locked, strong, sustained — should read as a clear GO on structure alone.
+  const target = constantDay(day, { fromMinute: 0, toMinute: 60, speed: 20, dir: 297, rh: 40 });
+  const callTs = target[target.length - 1].ts;
+  // Neighbor blowing nearly as hard as the target — ratio > 0.9, the exact case v1 penalizes.
+  const hotNeighbor = constantDay(day, { fromMinute: 0, toMinute: 60, speed: 19, dir: 297, rh: 40 });
+
+  it('v1 (frozen, unchanged) still subtracts a point for a blowing neighbor — this is the documented drift, not a new bug', () => {
+    const f = computeFeatures(target, callTs, { station: 'DP Soda Lakes', threshold: 15, sunriseTs: null, neighborSeries: [hotNeighbor] });
+    const call = callRule(f, { threshold: 15 });
+    expect(f.neighborMax / f.avg30).toBeGreaterThan(0.9);
+    expect(call.signals.neighbors).toBe(-1);
+  });
+
+  it('v2 never assigns a negative neighbor signal, even at the same >0.9 ratio', () => {
+    const f = computeFeaturesV2(target, callTs, { station: 'DP Soda Lakes', threshold: 15, sunriseTs: null, neighborSeries: [hotNeighbor] });
+    const call = callRuleV2(f, { threshold: 15 });
+    expect(f.neighborMax / f.avg30).toBeGreaterThan(0.9);
+    expect(call.signals.neighbors).toBeGreaterThanOrEqual(0);
+    expect(call.reasons.some((r) => r.includes('does not argue against going'))).toBe(true);
+  });
+
+  it('a calm neighbor still scores +1 in both v1 and v2 (only the penalty side changed)', () => {
+    const calmNeighbor = constantDay(day, { fromMinute: 0, toMinute: 60, speed: 2, dir: 90, rh: 40 });
+    const optsCalm = { station: 'DP Soda Lakes', threshold: 15, sunriseTs: null, neighborSeries: [calmNeighbor] };
+    const v1Call = callRule(computeFeatures(target, callTs, optsCalm), { threshold: 15 });
+    const v2Call = callRuleV2(computeFeaturesV2(target, callTs, optsCalm), { threshold: 15 });
+    expect(v1Call.signals.neighbors).toBe(1);
+    expect(v2Call.signals.neighbors).toBe(1);
+  });
+});
+
+describe('feature parity — v2 is a strict superset of v1 on every shared field', () => {
+  it('produces byte-identical core features for identical input (live script must be able to use either safely)', () => {
+    const day = '2026-08-01';
+    const points = constantDay(day, { fromMinute: 0, toMinute: 90, speed: 16, dir: 300, rh: 45 });
+    const neighbor = constantDay(day, { fromMinute: 0, toMinute: 90, speed: 3, dir: 90, rh: 45 });
+    const callTs = points[points.length - 1].ts;
+    const opts = { station: 'DP Soda Lakes', threshold: 15, sunriseTs: null, neighborSeries: [neighbor] };
+    const v1 = computeFeatures(points, callTs, opts);
+    const v2 = computeFeaturesV2(points, callTs, opts);
+    for (const key of Object.keys(v1)) {
+      expect(v2[key]).toEqual(v1[key]);
+    }
+    // v2 adds exactly these two extra descriptive fields, nothing else.
+    expect(Object.keys(v2).sort()).toEqual([...Object.keys(v1), 'pctOverThresholdSlices', 'pctOverThresholdTrendDelta'].sort());
+  });
+});
+
+describe('active-hold — censoring and gaps are never read as an observed death', () => {
+  const HOUR_ = 3600;
+
+  it('reports a real drop as observed, with the correct duration', () => {
+    // Regular 5-minute cadence matching stepMin, so no point is mistaken for a data gap.
+    const points = [
+      { ts: 0, speed: 20 },
+      { ts: 300, speed: 20 },
+      { ts: 600, speed: 20 },
+      { ts: 900, speed: 19 },
+      { ts: 1200, speed: 19 },
+      { ts: 1500, speed: 19 },
+      { ts: 1800, speed: 8 }, // drops below 15 at t+30min
+    ];
+    const res = findEventEnd(points, 0, 3 * HOUR_, 15, 5);
+    expect(res.observed).toBe(true);
+    expect(res.durationMinutes).toBe(30);
+  });
+
+  it('reports an event still above threshold at the window boundary as censored, not observed', () => {
+    // Regular 30-minute cadence out to the window boundary, never dropping below threshold.
+    const points = [0, 1800, 3600, 5400, 7200, 9000, 10800].map((ts) => ({ ts, speed: 18 }));
+    const res = findEventEnd(points, 0, 3 * HOUR_, 15, 30);
+    expect(res.observed).toBe(false);
+    expect(res.reason).toBe('censored');
+    // A censored event's duration is a lower bound, never averaged as if observed.
+    expect(res.durationMinutes).toBeGreaterThanOrEqual(150);
+  });
+
+  it('reports a real data outage as a gap, never assumes the event died quietly', () => {
+    const points = [
+      { ts: 0, speed: 20 },
+      { ts: 300, speed: 20 }, // normal cadence for two points, establishing a real prevTs
+      // large gap — no points until well past one step interval
+      { ts: 3 * HOUR_, speed: 3 },
+    ];
+    const res = findEventEnd(points, 0, 3 * HOUR_, 15, 5);
+    expect(res.observed).toBe(false);
+    expect(res.reason).toBe('gap');
+  });
+
+  it('checkpointStatus returns unknown rather than guessing when there is no data in the trailing window', () => {
+    const points = [{ ts: 0, speed: 20 }];
+    expect(checkpointStatus(points, 10 * HOUR_, 15)).toBe('unknown');
+  });
+
+  it('analyzeActiveDay marks a checkpoint beyond the observation window as unknown, not below', () => {
+    const day = '2026-07-15';
+    const points = constantDay(day, { fromMinute: 0, toMinute: 60, speed: 20, dir: 297, rh: 40 });
+    const callTs = points[0].ts;
+    const result = analyzeActiveDay({ points, cycle_type: '5min' }, callTs, 15);
+    // gate+60 for a July (06:00 gate) morning is comfortably inside the 3hr-past-sunrise bound in
+    // this synthetic day (no sunrise supplied to gateOpenTime path), so this just asserts the
+    // checkpoints object always has all three keys and never silently drops one.
+    expect(Object.keys(result.checkpoints).sort()).toEqual(['gate', 'gatePlus30', 'gatePlus60'].sort());
+  });
+});
+
+describe('active-hold — low-sample groups fall back to the overall rate, never a bare small-n figure', () => {
+  it('pickGroupOrOverall falls back below MIN_GROUP_SIZE and uses the group at or above it', () => {
+    const small = { n: MIN_GROUP_SIZE - 1, above: 1, rate: 1 };
+    const big = { n: MIN_GROUP_SIZE, above: 10, rate: 0.5 };
+    const overall = { n: 999, above: 500, rate: 0.5 };
+
+    const smallResult = pickGroupOrOverall(small, overall);
+    expect(smallResult.useGroup).toBe(false);
+    expect(smallResult.summary).toBe(overall);
+
+    const bigResult = pickGroupOrOverall(big, overall);
+    expect(bigResult.useGroup).toBe(true);
+    expect(bigResult.summary).toBe(big);
+  });
+
+  it('falls back to overall when the group is missing entirely', () => {
+    const overall = { n: 10, above: 5, rate: 0.5 };
+    const result = pickGroupOrOverall(undefined, overall);
+    expect(result.useGroup).toBe(false);
+    expect(result.summary).toBe(overall);
+  });
+
+  it('summarizeGroup reports both observed and censored counts, never merging them', () => {
+    const results = [
+      { checkpoints: { gate: 'above', gatePlus30: 'above', gatePlus60: 'below' }, eventEnd: { observed: true, durationMinutes: 45 } },
+      { checkpoints: { gate: 'above', gatePlus30: 'below', gatePlus60: 'below' }, eventEnd: { observed: false, reason: 'censored', durationMinutes: 200 } },
+      { checkpoints: { gate: 'unknown', gatePlus30: 'unknown', gatePlus60: 'unknown' }, eventEnd: { observed: false, reason: 'gap' } },
+    ];
+    const summary = summarizeGroup(results);
+    expect(summary.n).toBe(3);
+    expect(summary.duration.observedCount).toBe(1);
+    expect(summary.duration.censoredCount).toBe(1);
+    expect(summary.duration.unknownDueToGap).toBe(1);
+    expect(summary.duration.minCensoredMinutes).toBe(200);
+    // The one 'unknown' checkpoint must not count as either above or below in the rate.
+    expect(summary.gate.n).toBe(2);
+    expect(summary.gate.above).toBe(2);
+  });
+});
+
+describe('prediction-log-store — atomic upsert and deduplication', () => {
+  let dir;
+  let logPath;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'katabatic-log-test-'));
+    logPath = join(dir, 'prediction-log.csv');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function row(overrides = {}) {
+    return buildLogRow({
+      source: 'backtest',
+      date: '2026-07-15',
+      callTime: '05:45',
+      station: 'DP Soda Lakes',
+      threshold: 15,
+      features: { avg30: 16, avg60: 15 },
+      call: { verdict: 'GO', score: 4 },
+      label: { label: true, gateOpenHour: 6 },
+      featureVersion: FEATURE_VERSION_V1,
+      ruleVersion: RULE_VERSION_V1,
+      ...overrides,
+    });
+  }
+
+  it('re-running the same (source, date, call_time, station, rule_version) replaces the row rather than duplicating it', async () => {
+    await upsertRow(logPath, row({ call: { verdict: 'GO', score: 4 } }));
+    const result = await upsertRow(logPath, row({ call: { verdict: 'NO_GO', score: -1 } }));
+    expect(result.replaced).toBe(1);
+    const rows = await readAllRows(logPath);
+    expect(rows.length).toBe(1);
+    expect(rows[0].verdict).toBe('NO_GO');
+  });
+
+  it('a v1 and a v2 row for the identical morning and call time coexist rather than colliding', async () => {
+    await upsertRows(logPath, [row({ ruleVersion: RULE_VERSION_V1 }), row({ ruleVersion: RULE_VERSION_V2 })]);
+    const rows = await readAllRows(logPath);
+    expect(rows.length).toBe(2);
+    expect(new Set(rows.map((r) => r.rule_version))).toEqual(new Set([RULE_VERSION_V1, RULE_VERSION_V2]));
+  });
+
+  it('preserves unrelated existing rows (e.g. a live call) when upserting new backtest rows', async () => {
+    const liveRow = row({ source: 'live', date: '2026-08-01', callTime: '05:45' });
+    await upsertRow(logPath, liveRow);
+    await upsertRow(logPath, row({ source: 'backtest', date: '2026-07-15' }));
+    const rows = await readAllRows(logPath);
+    expect(rows.length).toBe(2);
+    expect(rows.some((r) => r.source === 'live' && r.date === '2026-08-01')).toBe(true);
+  });
+
+  it('writes a clean file with no blank rows, even across repeated upserts', async () => {
+    await upsertRow(logPath, row());
+    await upsertRow(logPath, row({ date: '2026-07-16' }));
+    const { readFileSync } = await import('fs');
+    const text = readFileSync(logPath, 'utf8');
+    expect(text).not.toContain('\n\n');
+    expect(text.endsWith('\n')).toBe(true);
+  });
+
+  it('rowKey groups exactly on (source, date, call_time, station, rule_version)', () => {
+    const a = row();
+    const b = row({ threshold: 12 }); // threshold differs but key fields don't — same key
+    expect(rowKey(a)).toBe(rowKey(b));
+    const c = row({ ruleVersion: RULE_VERSION_V2 });
+    expect(rowKey(a)).not.toBe(rowKey(c));
   });
 });

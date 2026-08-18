@@ -13,7 +13,14 @@
  *
  * `human_note` is the one column a machine cannot fill: whether it was *actually* rideable
  * (chop, launch-relative direction, gear). It is strictly optional and NOTHING may block on it.
+ *
+ * `feature_version` / `rule_version` / `label_version` (see scripts/lib/versions.mjs) make every
+ * row self-describing. Rows written before these columns existed are backfilled to `legacy` by
+ * `scripts/migrate-prediction-log.mjs` rather than left blank, so "legacy" is a fact about the
+ * row, not an absence of one.
  */
+
+import { FEATURE_VERSION_V1, RULE_VERSION_V1, LABEL_VERSION_V1 } from './versions.mjs';
 
 export const LOG_COLUMNS = [
   'source', // backtest | live
@@ -21,6 +28,9 @@ export const LOG_COLUMNS = [
   'call_time',
   'station',
   'threshold_mph',
+  'feature_version',
+  'rule_version',
+  'label_version',
   // --- features visible at call time (no lookahead) ---
   'avg30',
   'avg60',
@@ -68,13 +78,29 @@ export function toCsvRow(obj) {
 const round = (v, dp = 1) => (v === null || v === undefined || !Number.isFinite(v) ? null : Number(v.toFixed(dp)));
 
 /** Flatten features + call + label into a log row. Single place, so backtest and live agree. */
-export function buildLogRow({ source, date, callTime, station, threshold, features, call, label, humanNote = null }) {
+export function buildLogRow({
+  source,
+  date,
+  callTime,
+  station,
+  threshold,
+  features,
+  call,
+  label,
+  humanNote = null,
+  featureVersion = FEATURE_VERSION_V1,
+  ruleVersion = RULE_VERSION_V1,
+  labelVersion = LABEL_VERSION_V1,
+}) {
   return {
     source,
     date,
     call_time: callTime,
     station,
     threshold_mph: threshold,
+    feature_version: featureVersion,
+    rule_version: ruleVersion,
+    label_version: labelVersion,
     avg30: round(features?.avg30),
     avg60: round(features?.avg60),
     min30: round(features?.min30),

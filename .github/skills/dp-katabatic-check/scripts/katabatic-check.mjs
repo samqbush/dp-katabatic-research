@@ -21,9 +21,14 @@ import axios from 'axios';
 import { config } from 'dotenv';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { appendFileSync, existsSync, writeFileSync } from 'fs';
-import { buildLogRow, csvHeader, toCsvRow } from '../../../../scripts/lib/prediction-log.mjs';
-import { gateOpenTime } from '../../../../scripts/lib/season.mjs';
+import { readFile } from 'fs/promises';
+import { buildLogRow } from '../../../../scripts/lib/prediction-log.mjs';
+import { upsertRow } from '../../../../scripts/lib/prediction-log-store.mjs';
+import { gateOpenHour } from '../../../../scripts/lib/season.mjs';
+import { computeFeatures, callRule } from '../../../../scripts/lib/call-rule.mjs';
+import { computeFeaturesV2 } from '../../../../scripts/lib/call-rule-v2.mjs';
+import { pickGroupOrOverall } from '../../../../scripts/lib/active-hold.mjs';
+import { FEATURE_VERSION_V1, RULE_VERSION_V1 } from '../../../../scripts/lib/versions.mjs';
 import {
   zonedTime,
   zonedParts,
@@ -383,7 +388,7 @@ async function main() {
 
   /* --- neighbors: a local drainage jet should NOT show up basin-wide --- */
   console.log(`\n## NEIGHBOR STATIONS (cross-check — drainage flow is local)`);
-  let neighborMax = null;
+  const neighborSeries = [];
   for (const dev of dpDevices) {
     if (dev.mac === target.mac) continue;
     try {
@@ -392,6 +397,7 @@ async function main() {
       // old exists), which silently reported every neighbour as "no recent data" and left
       // neighborMax null. A wide window returns the same recent rows reliably.
       const np = await getHistory(dev.mac, start, now);
+      neighborSeries.push(np.map((p) => ({ ts: p.ts, speed: p.speed, dir: p.dir, gust: p.gust })));
       const n = np[np.length - 1];
       if (!n) {
         console.log(`${dev.name.padEnd(20)} no recent data`);
@@ -405,57 +411,99 @@ async function main() {
         `${dev.name.padEnd(20)} ${fmtTime(n.date)}  spd ${mph(n.speed)}  gust ${mph(n.gust)}  ${dirStr(n.dir)}` +
           (stale ? `  (stale — ${Math.round(ageMin)} min old, not used as a cross-check)` : '')
       );
-      if (!stale && Number.isFinite(n.speed) && (neighborMax === null || n.speed > neighborMax)) neighborMax = n.speed;
     } catch (err) {
       console.log(`${dev.name.padEnd(20)} error: ${err.message}`);
     }
   }
 
+  /* --- versioned deterministic verdict: shared computeFeatures/callRule (call-rule.mjs), the
+   * SAME code the backtest replays across ~330 archived mornings. This is the promoted baseline
+   * — call-rule-v1 — not an ad-hoc re-implementation. A v2 candidate (corrected neighbour signal,
+   * §8; trajectory feature) exists in call-rule-v2.mjs but did NOT clear the plan's promotion bar
+   * in the real backtest (0 misses recovered, false-alarm rate unchanged within noise — see
+   * research/katabatic-prediction.md), so v1 remains what actually drives the score below. v2's
+   * trajectory feature IS shown, descriptively, because per the plan it was never gated on
+   * promotion — it changes wording, never the verdict, in either version. */
+  const callTimeTs = Math.floor(now.getTime() / 1000);
+  const sunriseTs = sunrise ? Math.floor(sunrise.getTime() / 1000) : null;
+  const featureOpts = { station: target.name, threshold: args.threshold, sunriseTs, neighborSeries };
+  const features = computeFeatures(points, callTimeTs, featureOpts);
+  const call = callRule(features, { threshold: args.threshold });
+  const featuresV2 = computeFeaturesV2(points, callTimeTs, featureOpts); // descriptive trajectory only
+
+  console.log(`\n## VERSIONED VERDICT (${RULE_VERSION_V1}, deterministic — treat as the baseline)`);
+  console.log(`${call.verdict}${call.score !== null ? `  (score ${call.score})` : ''}`);
+  for (const reason of call.reasons) console.log(`  - ${reason}`);
+  if (featuresV2?.pctOverThresholdTrendDelta !== null && featuresV2?.pctOverThresholdTrendDelta <= -20) {
+    console.log(
+      `  ⚠️  over-${args.threshold} share fell ${Math.abs(featuresV2.pctOverThresholdTrendDelta).toFixed(0)}pp over the last hour ` +
+        `(slices: ${featuresV2.pctOverThresholdSlices.map((s) => (s === null ? 'n/a' : `${s.toFixed(0)}%`)).join(' → ')}) ` +
+        `— this is fading regardless of what the mean Trend word says. Sharpen the advice; do not suppress a go.`
+    );
+  }
+
+  /* --- if an event is already running, show measured checkpoint hold history (§4). This is a
+   * SEPARATE question from the verdict above: not "should you go" but "given it's already
+   * blowing, how long has this historically held". Reads a static, pre-computed artifact
+   * (scripts/analyze-active-hold.mjs) rather than re-deriving anything at call time. --- */
+  if (features?.avg30 !== null && features?.avg30 >= args.threshold) {
+    console.log(`\n## ACTIVE-EVENT HOLD HISTORY (measured, not a live re-derivation)`);
+    try {
+      const calibPath = join(REPO_ROOT, 'research', 'active-hold-calibration.json');
+      const calib = JSON.parse(await readFile(calibPath, 'utf8'));
+      const gh = gateOpenHour(todayAtStation());
+      const group = calib.byGateHour?.[gh];
+      const { useGroup, summary: g } = pickGroupOrOverall(group, calib.overall, calib.minGroupSize);
+      const note = useGroup ? '' : ` (gate-${gh} sample n=${group?.n ?? 0} < ${calib.minGroupSize}; showing overall rate)`;
+      const asPct = (r) => (r?.rate === null || r?.rate === undefined ? 'n/a' : `${(r.rate * 100).toFixed(0)}% (${r.above}/${r.n})`);
+      console.log(`Already at/above ${args.threshold} mph now.${note}`);
+      console.log(`  held to gate-open:  ${asPct(g.gate)}`);
+      console.log(`  held to gate+30min: ${asPct(g.gatePlus30)}`);
+      console.log(`  held to gate+60min: ${asPct(g.gatePlus60)}`);
+      if (g.duration?.medianMinutes !== null && g.duration?.medianMinutes !== undefined) {
+        console.log(
+          `  observed full-event duration: median +${g.duration.medianMinutes}min ` +
+            `(p25 +${g.duration.p25Minutes}, p75 +${g.duration.p75Minutes}; ${g.duration.observedCount} observed, ` +
+            `${g.duration.censoredCount} still running when the observation window closed)`
+        );
+      }
+      console.log(`  ${calib.note}`);
+    } catch {
+      console.log('⚠️  Historical calibration unavailable (run scripts/analyze-active-hold.mjs) — no fabricated probability given.');
+    }
+  }
+
   console.log(`\n${'='.repeat(72)}`);
 
-  /* --- optional: append this call to the prediction log ---
+  /* --- optional: persist this call to the prediction log ---
    *
    * Same CSV shape the backtest emits, so a live morning and a replayed one are directly
    * comparable. Outcome columns (label, sustained_minutes, ...) are deliberately left blank:
    * at call time the morning has not happened yet, and guessing them would be fabricating the
-   * very ground truth the log exists to provide. The weekly refresh fills them from the meter.
+   * very ground truth the log exists to provide. `scripts/reconcile-live-log.mjs` fills them in
+   * once the archive has the day. Written via the atomic upsert store (scripts/lib/
+   * prediction-log-store.mjs), which also fixes the double-newline defect the old
+   * appendFileSync-based writer had, and de-duplicates a same-morning re-run by key rather than
+   * appending a second row for it.
    */
   if (args.log) {
-    // Station's calendar day, not the laptop's: at 00:30 in Chicago it is still yesterday in
-    // Colorado, and the gate hour is month-dependent (§4.5).
-    const gate = gateOpenTime(todayAtStation());
     const row = buildLogRow({
       source: 'live',
       date: fmtStationDateTime(now).slice(0, 10),
       callTime: fmtStationDateTime(now).slice(11, 16),
       station: target.name,
       threshold: args.threshold,
-      features: {
-        avg30: stats30?.avg,
-        avg60: stats60?.avg,
-        min30: stats30?.min,
-        max30: stats30?.max,
-        peakGust30: stats30?.peakGust,
-        pctOverThreshold30: stats30?.pctOverThreshold,
-        meanDir: stats30?.meanDir,
-        dirConsistency: stats30?.consistency,
-        inIdealPct: stats30?.inIdealPct,
-        trend: trendWord,
-        trendDelta,
-        rhDelta,
-        neighborMax,
-        minutesPastSunrise: sunrise ? Math.round((now - sunrise) / 60000) : null,
-        minutesUntilGate: Math.round((gate.getTime() - now.getTime()) / 60000),
-      },
-      call: null,
+      features,
+      call,
       label: null,
       humanNote: args.note,
+      featureVersion: FEATURE_VERSION_V1,
+      ruleVersion: RULE_VERSION_V1,
     });
 
     const logPath = join(REPO_ROOT, 'research', 'prediction-log.csv');
-    if (!existsSync(logPath)) writeFileSync(logPath, csvHeader() + '\n');
-    appendFileSync(logPath, toCsvRow(row) + '\n');
-    console.log(`\n📝 Logged to research/prediction-log.csv (outcome filled in by the next archive refresh)`);
+    await upsertRow(logPath, row);
+    console.log(`\n📝 Logged ${call.verdict} (score ${call.score}) to research/prediction-log.csv (outcome filled in by reconciliation)`);
   }
 }
 

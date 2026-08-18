@@ -15,13 +15,15 @@
  *   node scripts/backtest-katabatic.mjs --threshold 12 --out research/prediction-log.csv
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import { REPO_ROOT, SUNRISE_COORDS } from './lib/ecowitt.mjs';
-import { computeFeatures, callRule } from './lib/call-rule.mjs';
+import { computeFeatures, callRule, FEATURE_VERSION as FEATURE_VERSION_V1, RULE_VERSION as RULE_VERSION_V1 } from './lib/call-rule.mjs';
+import { computeFeaturesV2, callRuleV2, FEATURE_VERSION as FEATURE_VERSION_V2, RULE_VERSION as RULE_VERSION_V2 } from './lib/call-rule-v2.mjs';
 import { labelDay, parseArchiveDate, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
 import { calcSunrise } from './lib/sunrise.mjs';
-import { csvHeader, toCsvRow, buildLogRow } from './lib/prediction-log.mjs';
+import { buildLogRow } from './lib/prediction-log.mjs';
+import { readAllRows, upsertRows } from './lib/prediction-log-store.mjs';
 import { zonedTimeFrom } from './lib/zone.mjs';
 import { readDays, storeConfigSummary, closePool } from './lib/archive-store.mjs';
 
@@ -100,51 +102,71 @@ async function main() {
       const callTime = zonedTimeFrom(day, Math.floor(m / 60), m % 60, 0);
       const callTs = Math.floor(callTime.getTime() / 1000);
 
-      const features = computeFeatures(rec.points, callTs, {
+      // v1 — frozen. Must reproduce exactly what has already been documented.
+      const featuresV1 = computeFeatures(rec.points, callTs, {
         station: rec.station,
         threshold: args.threshold,
         sunriseTs,
         neighborSeries,
       });
-      // No readings yet at this hour — a real morning would have nothing to look at either.
-      if (!features) continue;
+      if (featuresV1) {
+        const callV1 = callRule(featuresV1, { threshold: args.threshold });
+        rows.push(
+          buildLogRow({
+            source: 'backtest',
+            date,
+            callTime: fmtHM(m),
+            station: rec.station,
+            threshold: args.threshold,
+            features: featuresV1,
+            call: callV1,
+            label,
+            featureVersion: FEATURE_VERSION_V1,
+            ruleVersion: RULE_VERSION_V1,
+          })
+        );
+      }
 
-      const call = callRule(features, { threshold: args.threshold });
-      rows.push(
-        buildLogRow({
-          source: 'backtest',
-          date,
-          callTime: fmtHM(m),
-          station: rec.station,
-          threshold: args.threshold,
-          features,
-          call,
-          label,
-        })
-      );
+      // v2 — the corrected candidate. Written as a PAIRED row (same source, distinct
+      // rule_version) rather than overwriting v1, so both remain independently scoreable.
+      const featuresV2 = computeFeaturesV2(rec.points, callTs, {
+        station: rec.station,
+        threshold: args.threshold,
+        sunriseTs,
+        neighborSeries,
+      });
+      if (featuresV2) {
+        const callV2 = callRuleV2(featuresV2, { threshold: args.threshold });
+        rows.push(
+          buildLogRow({
+            source: 'backtest',
+            date,
+            callTime: fmtHM(m),
+            station: rec.station,
+            threshold: args.threshold,
+            features: featuresV2,
+            call: callV2,
+            label,
+            featureVersion: FEATURE_VERSION_V2,
+            ruleVersion: RULE_VERSION_V2,
+          })
+        );
+      }
     }
   }
 
   await mkdir(join(args.out, '..'), { recursive: true });
 
-  // Preserve live rows. The backtest regenerates every `backtest` row from scratch each run, but
-  // `live` rows are appended by katabatic-check.mjs at call time and can never be reconstructed —
-  // they record what the meter showed at the moment a real decision was made. A plain overwrite
-  // here would silently destroy them on the very first scheduled run, which is exactly the kind
-  // of unrecoverable data loss §4.2 exists to prevent.
-  let preserved = [];
-  try {
-    const existing = await readFile(args.out, 'utf8');
-    preserved = existing
-      .split('\n')
-      .filter((line) => line.trim() && !line.startsWith('source,') && !line.startsWith('backtest,'))
-      .map((line) => line + '\n');
-  } catch {
-    // No prior log — first run.
-  }
-
-  await writeFile(args.out, csvHeader() + rows.map(toCsvRow).join('') + preserved.join(''));
-  if (preserved.length) console.log(`Preserved ${preserved.length} live row(s) from previous runs.`);
+  // Upsert by (source, date, call_time, station, rule_version). This regenerates every backtest
+  // row from scratch each run WITHOUT touching `live`/`retrospective` rows (different `source`,
+  // so a different key) — those are appended by the live skill at call time and can never be
+  // reconstructed. A plain overwrite would silently destroy them, exactly the unrecoverable data
+  // loss §4.2 exists to prevent. v1 and v2 backtest rows also coexist rather than colliding,
+  // because `rule_version` is part of the key.
+  const before = await readAllRows(args.out);
+  const preservedCount = before.filter((r) => r.source !== 'backtest').length;
+  const result = await upsertRows(args.out, rows);
+  if (preservedCount) console.log(`Preserved ${preservedCount} non-backtest row(s) (live/retrospective) from previous runs.`);
 
   const positives = dayLabels.filter((l) => l.label).length;
   const missedByGate = dayLabels.filter((l) => l.missedDueToGate).length;
@@ -156,8 +178,9 @@ async function main() {
   console.log(`Excluded (unobserved, never counted as calm): ${unobserved}`);
   console.log(`Rideable mornings:  ${positives} (${((positives / dayLabels.length) * 100).toFixed(1)}% base rate, gate-conditioned)`);
   console.log(`Blew well but before the gate opened: ${missedByGate}`);
-  console.log(`Rows written:       ${rows.length} → ${args.out}`);
-  console.log(`\nNext: node scripts/score-backtest.mjs`);
+  console.log(`Rows written (v1+v2 paired): ${rows.length} → ${args.out} (${result.total} total rows in file)`);
+  console.log(`\nNext: node scripts/score-backtest.mjs --rule-version call-rule-v1`);
+  console.log(`      node scripts/score-backtest.mjs --rule-version call-rule-v2`);
 }
 
 main()
