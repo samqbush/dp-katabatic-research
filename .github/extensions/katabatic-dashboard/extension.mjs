@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { CanvasError, createCanvas, joinSession } from "@github/copilot-sdk/extension";
 
-import { loadDashboardData } from "./lib/dashboard-data.mjs";
+import { loadDashboardData } from "../../../scripts/lib/dashboard-data.mjs";
 import { renderDashboardHtml } from "./lib/renderer.mjs";
 
 const servers = new Map();

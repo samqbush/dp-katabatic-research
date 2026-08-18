@@ -1,11 +1,11 @@
-import { query } from "../../../../scripts/lib/db.mjs";
-import { readDays, isoDay } from "../../../../scripts/lib/archive-store.mjs";
-import { labelDay, parseArchiveDate } from "../../../../scripts/lib/label.mjs";
+import { query } from "./db.mjs";
+import { readDays, isoDay } from "./archive-store.mjs";
+import { labelDay, parseArchiveDate } from "./label.mjs";
 import {
     experimentalCallResult,
     FORWARD_HOLDOUT_START,
-} from "../../../../scripts/lib/night-before-call.mjs";
-import { zonedTimeFrom } from "../../../../scripts/lib/zone.mjs";
+} from "./night-before-call.mjs";
+import { zonedTimeFrom } from "./zone.mjs";
 
 const SODA = "dp-soda-lakes";
 
@@ -34,6 +34,7 @@ async function loadStationHealth() {
             s.name,
             s.source,
             max(sd.local_date) AS latest_date,
+            max(sd.fetched_at) AS latest_fetched_at,
             ((CURRENT_TIMESTAMP AT TIME ZONE 'America/Denver')::date - max(sd.local_date))::int AS lag_days,
             count(sd.local_date)::int AS archived_days,
             count(*) FILTER (WHERE sd.status = 'ok')::int AS ok_days,
@@ -58,6 +59,9 @@ async function loadStationHealth() {
             name: row.name,
             source: row.source,
             latestDate: row.latest_date ? isoDay(row.latest_date) : null,
+            latestFetchedAt: row.latest_fetched_at
+                ? new Date(row.latest_fetched_at).toISOString()
+                : null,
             lagDays: row.lag_days,
             archivedDays: row.archived_days,
             okDays: row.ok_days,
@@ -100,12 +104,14 @@ async function loadPredictionModel() {
     };
 }
 
-async function loadForecasts(modelVersion) {
+async function loadForecasts(modelVersion, { from, to } = {}) {
     const { rows } = await query(`
         WITH latest_runs AS (
             SELECT local_date, max(run_init) AS run_init
             FROM hrrr_forecasts
             WHERE station_slug = $1
+              AND ($3::date IS NULL OR local_date >= $3)
+              AND ($4::date IS NULL OR local_date <= $4)
             GROUP BY local_date
         ),
         forecast_summary AS (
@@ -145,7 +151,7 @@ async function loadForecasts(modelVersion) {
          AND p.run_init = f.run_init
          AND p.model_version = $2
         ORDER BY f.local_date
-    `, [SODA, modelVersion]);
+    `, [SODA, modelVersion, from ?? null, to ?? null]);
 
     return rows.map((row) => ({
         date: isoDay(row.local_date),
@@ -239,13 +245,21 @@ function summarizeForecastOnly(forecast) {
     };
 }
 
-export async function loadDashboardData({ recentDays = 14, thresholdMph = 15 } = {}) {
+export async function loadDashboardData({
+    recentDays = 14,
+    thresholdMph = 15,
+    archiveFrom,
+    archiveTo,
+} = {}) {
     const [stationHealth, sodaDays, probabilityModel] = await Promise.all([
         loadStationHealth(),
-        readDays(SODA),
+        readDays(SODA, { from: archiveFrom, to: archiveTo }),
         loadPredictionModel(),
     ]);
-    const forecasts = await loadForecasts(probabilityModel?.modelVersion ?? null);
+    const forecasts = await loadForecasts(
+        probabilityModel?.modelVersion ?? null,
+        { from: archiveFrom, to: archiveTo },
+    );
 
     const labels = sodaDays.map((record) => ({
         record,

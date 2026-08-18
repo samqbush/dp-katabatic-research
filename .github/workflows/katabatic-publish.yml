@@ -1,0 +1,47 @@
+# Publish the stored research snapshot to one canonical GitHub Discussion.
+#
+# This job only reads predictions and outcomes already persisted by the two collector workflows. It
+# never calculates a call, invokes live wind meters, or changes the research model.
+name: Katabatic Discussion publisher
+
+on:
+  workflow_run:
+    workflows:
+      - Katabatic forecast archive
+      - Katabatic archive refresh
+    types:
+      - completed
+  schedule:
+    # Fallbacks in case a producer is skipped or persists partial data before failing.
+    - cron: '45 2 * * *'
+    - cron: '45 20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  discussions: write
+
+concurrency:
+  group: katabatic-discussion-publisher
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Update pinned research Discussion
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL_RO || secrets.NEON_DATABASE_URL }}
+          KATABATIC_DISCUSSION_NUMBER: ${{ vars.KATABATIC_DISCUSSION_NUMBER }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run publish:discussion

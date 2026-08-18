@@ -94,8 +94,31 @@ Day to day, two data-collection jobs write to Neon:
 |---|---|---|
 | `katabatic-forecast.yml` | 01:30 UTC | Raw HRRR inputs plus an immutable, versioned experimental call and success chance. |
 | `katabatic-archive.yml` | 20:00 UTC | Station observations and the derived rideable/not-rideable outcome. |
+| `katabatic-publish.yml` | After both jobs, with scheduled fallbacks | Replaces one pinned GitHub Discussion with the rolling 14-day research snapshot. |
 
 Neither is useful alone. The project accrues value only as matched forecast/outcome pairs.
+
+### Public research snapshot
+
+The latest stored predictions and outcomes are published to the pinned
+[Night-before katabatic research report](https://github.com/samqbush/dp-katabatic-research/discussions/1)
+for quick phone access and sharing. The post is a read-only view of Neon data: it does not calculate
+calls, invoke the live wind meters, or send an alarm.
+
+The publisher runs after either collector completes and at 02:45/20:45 UTC as a fallback. It updates
+the configured Discussion only when the rendered body changed. `KATABATIC_DISCUSSION_NUMBER` must be
+set as an Actions repository variable; a missing variable, empty report, missing stored prediction,
+or mismatched Discussion title fails closed. A `NEON_DATABASE_URL_RO` secret is preferred when a
+read-only Neon role is available, otherwise the existing `NEON_DATABASE_URL` secret is used.
+
+To preview without changing GitHub:
+
+```bash
+npm run publish:discussion:dry-run
+```
+
+If GitHub disables scheduled workflows after prolonged public-repository inactivity, re-enable the
+workflows in the Actions tab and manually dispatch **Katabatic Discussion publisher** once.
 
 ### What is and is not automated
 
