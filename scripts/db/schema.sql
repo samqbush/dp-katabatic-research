@@ -128,8 +128,9 @@ CREATE INDEX IF NOT EXISTS station_days_local_date_idx
 -- This table stores model inputs, NOT a PACK/MAYBE/SLEEP IN verdict. Versioned, immutable issued
 -- predictions live in night_before_predictions below.
 --
--- Source: single-runs-api.open-meteo.com (models=gfs_hrrr), which serves the lid
--- pinned to an exact run. §13.2 believed this impossible; see §14.1.
+-- Normal source: single-runs-api.open-meteo.com (models=gfs_hrrr), which serves the lid pinned to
+-- an exact run. `source` remains explicit because an upstream outage may require recovery from the
+-- authoritative NOAA GRIB without pretending the interpolation pipelines are identical.
 --
 -- A failed fetch must NEVER be written as a row. Per §4.2 absence of data is not
 -- absence of wind, and a missing run must stay missing so a re-run retries it.
@@ -141,8 +142,18 @@ CREATE TABLE IF NOT EXISTS hrrr_forecasts (
   lid_m            numeric(7,1),          -- boundary_layer_height, metres
   wind_mph         numeric(5,1),          -- wind_speed_10m
   fetched_at       timestamptz NOT NULL,
+  source           text        NOT NULL DEFAULT 'open-meteo-single-runs',
   PRIMARY KEY (station_slug, local_date, run_init, valid_hour_local)
 );
+
+ALTER TABLE hrrr_forecasts
+  ADD COLUMN IF NOT EXISTS source text;
+UPDATE hrrr_forecasts
+  SET source = 'open-meteo-single-runs'
+  WHERE source IS NULL;
+ALTER TABLE hrrr_forecasts
+  ALTER COLUMN source SET DEFAULT 'open-meteo-single-runs',
+  ALTER COLUMN source SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS hrrr_forecasts_date_idx
   ON hrrr_forecasts (station_slug, local_date);

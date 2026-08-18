@@ -32,6 +32,7 @@ import {
 } from './lib/night-before-prediction-store.mjs';
 
 const SLUG = 'dp-soda-lakes';
+const FORECAST_SOURCE = 'open-meteo-single-runs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,8 +61,8 @@ async function store(date, rows) {
   for (const r of rows) {
     await query(
       `INSERT INTO hrrr_forecasts
-         (station_slug, local_date, run_init, valid_hour_local, lid_m, wind_mph, fetched_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (station_slug, local_date, run_init, valid_hour_local, lid_m, wind_mph, fetched_at, source)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (station_slug, local_date, run_init, valid_hour_local) DO UPDATE
            SET lid_m = COALESCE(hrrr_forecasts.lid_m, EXCLUDED.lid_m),
                wind_mph = COALESCE(hrrr_forecasts.wind_mph, EXCLUDED.wind_mph),
@@ -70,7 +71,7 @@ async function store(date, rows) {
       [SLUG, date, runInit, r.hr,
        Number.isFinite(r.lid) ? r.lid : null,
        Number.isFinite(r.wind) ? r.wind : null,
-       fetchedAt],
+       fetchedAt, FORECAST_SOURCE],
     );
   }
 }

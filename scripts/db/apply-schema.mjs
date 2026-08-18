@@ -2,7 +2,7 @@
 /**
  * Apply scripts/db/schema.sql to the Neon database.
  *
- * Idempotent: every statement is CREATE ... IF NOT EXISTS or an upsert, so it is safe to re-run.
+ * Idempotent: schema changes are guarded and data migrations are repeatable, so it is safe to re-run.
  *
  * Usage:
  *   node scripts/db/apply-schema.mjs
