@@ -125,6 +125,9 @@ CREATE INDEX IF NOT EXISTS station_days_local_date_idx
 -- model was asked too early", and §14.3 could only settle it because the run is
 -- explicit. A row without its init time is not worth writing.
 --
+-- This table stores model inputs, NOT a PACK/MAYBE/SLEEP IN verdict. Versioned, immutable issued
+-- predictions live in night_before_predictions below.
+--
 -- Source: single-runs-api.open-meteo.com (models=gfs_hrrr), which serves the lid
 -- pinned to an exact run. §13.2 believed this impossible; see §14.1.
 --
@@ -143,3 +146,50 @@ CREATE TABLE IF NOT EXISTS hrrr_forecasts (
 
 CREATE INDEX IF NOT EXISTS hrrr_forecasts_date_idx
   ON hrrr_forecasts (station_slug, local_date);
+
+-- ============================================================================
+-- VERSIONED NIGHT-BEFORE PREDICTIONS
+-- ============================================================================
+-- The dashboard is a visualization, never the source of an issued call. Every call and percentage
+-- is materialized here with the exact model version and HRRR run that produced it. Rows are
+-- immutable: changed logic requires a new model_version rather than rewriting history.
+CREATE TABLE IF NOT EXISTS night_before_models (
+  model_version             text PRIMARY KEY,
+  created_at                timestamptz NOT NULL,
+  trained_through           date NOT NULL,
+  training_size             integer NOT NULL CHECK (training_size > 0),
+  training_positives        integer NOT NULL CHECK (
+                              training_positives >= 0
+                              AND training_positives <= training_size
+                            ),
+  target_threshold_mph      numeric(4,1) NOT NULL,
+  target_sustained_minutes  integer NOT NULL CHECK (target_sustained_minutes > 0),
+  target_description        text NOT NULL,
+  status                    text NOT NULL,
+  parameters                jsonb NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS night_before_predictions (
+  station_slug           text NOT NULL REFERENCES stations(slug) ON DELETE RESTRICT,
+  local_date             date NOT NULL,
+  run_init               timestamptz NOT NULL,
+  model_version          text NOT NULL REFERENCES night_before_models(model_version) ON DELETE RESTRICT,
+  generation_mode        text NOT NULL CHECK (generation_mode IN ('forward', 'retrospective')),
+  avg_wind_mph           numeric(7,3) NOT NULL,
+  avg_lid_m              numeric(8,3) NOT NULL,
+  forecast_hours         integer NOT NULL CHECK (forecast_hours >= 3),
+  call                   text NOT NULL CHECK (call IN ('PACK', 'MAYBE', 'SLEEP IN')),
+  call_reason            text NOT NULL,
+  success_probability    double precision NOT NULL CHECK (
+                           success_probability >= 0 AND success_probability <= 1
+                         ),
+  success_chance_percent integer NOT NULL CHECK (
+                           success_chance_percent BETWEEN 5 AND 95
+                           AND success_chance_percent % 5 = 0
+                         ),
+  generated_at           timestamptz NOT NULL,
+  PRIMARY KEY (station_slug, local_date, run_init, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS night_before_predictions_date_idx
+  ON night_before_predictions (station_slug, local_date);

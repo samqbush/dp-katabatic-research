@@ -56,7 +56,8 @@ Backup the Neon katabatic archive to a local pg_dump custom-format file.
                     public repo. Costs nothing to omit: station rows are rebuilt
                     from scripts/lib/stations.mjs plus the MAC env vars by
                     scripts/db/apply-schema.mjs. Never exclude observations,
-                    station_days, or hrrr_forecasts — those are the irreplaceable part.
+                    station_days, hrrr_forecasts, night_before_models, or
+                    night_before_predictions — those are the irreplaceable part.
   --help            Show this.
 
 Requires NEON_DATABASE_URL in .env or the environment, and a pg_dump whose major

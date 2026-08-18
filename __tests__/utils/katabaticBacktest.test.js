@@ -1,5 +1,15 @@
 import { computeFeatures, callRule, circularMean, angularDiff, inRange, verdictToBinary } from '@/scripts/lib/call-rule.mjs';
 import { labelDay } from '@/scripts/lib/label.mjs';
+import {
+  buildExperimentalNightBeforePrediction,
+  EXPERIMENTAL_PROBABILITY_MODEL_V1,
+  experimentalCallResult,
+  experimentalNightBeforeCall,
+  experimentalSuccessChance,
+  fitExperimentalProbabilityModel,
+  FORWARD_HOLDOUT_START,
+} from '@/scripts/lib/night-before-call.mjs';
+import { summarizeForecastRows } from '@/scripts/lib/night-before-prediction-store.mjs';
 import { classifyEmptyDay, gateOpenHour } from '@/scripts/lib/season.mjs';
 import { zonedTime } from '@/scripts/lib/zone.mjs';
 
@@ -146,6 +156,108 @@ describe('call rule — stale data', () => {
     expect(verdictToBinary('MARGINAL')).toBe(true);
     expect(verdictToBinary('GO')).toBe(true);
     expect(verdictToBinary('NO_GO')).toBe(false);
+  });
+});
+
+describe('experimental night-before call', () => {
+  it('keeps the forward holdout boundary after the development sample', () => {
+    expect(FORWARD_HOLDOUT_START).toBe('2026-08-11');
+  });
+
+  it.each([
+    [{ avgWindMph: 10, avgLidM: 200, forecastHours: 4 }, 'PACK'],
+    [{ avgWindMph: 4, avgLidM: 300, forecastHours: 4 }, 'SLEEP IN'],
+    [{ avgWindMph: 5.5, avgLidM: 100, forecastHours: 4 }, 'SLEEP IN'],
+    [{ avgWindMph: 7, avgLidM: 200, forecastHours: 4 }, 'MAYBE'],
+  ])('reproduces the frozen pre-registered rule for %o', (inputs, expected) => {
+    expect(experimentalNightBeforeCall(inputs).call).toBe(expected);
+  });
+
+  it('refuses to call an incomplete forecast', () => {
+    expect(experimentalNightBeforeCall({
+      avgWindMph: 10,
+      avgLidM: 100,
+      forecastHours: 2,
+    }).call).toBeNull();
+  });
+
+  it('makes a false-negative outcome impossible to overlook', () => {
+    expect(experimentalCallResult('SLEEP IN', true)).toEqual({
+      label: 'MISSED SESSION',
+      tone: 'danger',
+    });
+  });
+
+  it('produces a date-specific probability without using the call bucket', () => {
+    const training = [];
+    for (let i = 0; i < 20; i++) {
+      training.push({
+        avgWindMph: 3 + i * 0.5,
+        avgLidM: 500 - i * 20,
+        rideable: i >= 12,
+      });
+    }
+    const model = fitExperimentalProbabilityModel(training);
+    const favorable = experimentalSuccessChance(model, {
+      avgWindMph: 12,
+      avgLidM: 80,
+      forecastHours: 4,
+    });
+    const unfavorable = experimentalSuccessChance(model, {
+      avgWindMph: 3,
+      avgLidM: 500,
+      forecastHours: 4,
+    });
+
+    expect(favorable.probability).toBeGreaterThan(unfavorable.probability);
+    expect(favorable.roundedPercent % 5).toBe(0);
+    expect(favorable.roundedPercent).toBeLessThanOrEqual(95);
+    expect(unfavorable.roundedPercent).toBeGreaterThanOrEqual(5);
+  });
+
+  it('withholds probability when the forecast is incomplete', () => {
+    const model = fitExperimentalProbabilityModel([
+      ...Array.from({ length: 10 }, (_, i) => ({
+        avgWindMph: 3 + i,
+        avgLidM: 500 - i * 20,
+        rideable: false,
+      })),
+      ...Array.from({ length: 10 }, (_, i) => ({
+        avgWindMph: 10 + i,
+        avgLidM: 200 - i * 10,
+        rideable: true,
+      })),
+    ]);
+    expect(experimentalSuccessChance(model, {
+      avgWindMph: 10,
+      avgLidM: 100,
+      forecastHours: 2,
+    })).toBeNull();
+  });
+
+  it('builds a versioned prediction from the frozen model', () => {
+    const prediction = buildExperimentalNightBeforePrediction({
+      avgWindMph: 9.6,
+      avgLidM: 87.5,
+      forecastHours: 4,
+    });
+
+    expect(prediction.modelVersion).toBe(EXPERIMENTAL_PROBABILITY_MODEL_V1.modelVersion);
+    expect(prediction.call).toBe('PACK');
+    expect(prediction.successChancePercent % 5).toBe(0);
+  });
+
+  it('summarizes only complete wind/lid forecast hours', () => {
+    expect(summarizeForecastRows([
+      { wind: 8, lid: 100 },
+      { wind: 10, lid: 200 },
+      { wind: null, lid: 300 },
+      { wind: 12, lid: 300 },
+    ])).toEqual({
+      avgWindMph: 10,
+      avgLidM: 200,
+      forecastHours: 3,
+    });
   });
 });
 

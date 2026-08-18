@@ -14,6 +14,7 @@
     "archive:ecowitt": "node scripts/archive-ecowitt.mjs",
     "archive:holfuy": "node scripts/archive-holfuy.mjs",
     "archive:forecast": "node scripts/archive-hrrr-forecast.mjs",
+    "archive:predictions": "node scripts/materialize-night-before-predictions.mjs",
     "archive:backup": "node scripts/backup-archive.mjs",
     "refresh": "node scripts/katabatic-refresh.mjs",
     "backtest": "node scripts/backtest-katabatic.mjs",

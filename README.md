@@ -88,20 +88,45 @@ npm run db:schema         # create tables
 npm run check             # tests, DST, timezone sweep, workflow lint
 ```
 
-Day to day this is now automated — two nightly jobs, both writing to Neon:
+Day to day, two data-collection jobs write to Neon:
 
 | Workflow | When | What it records |
 |---|---|---|
-| `katabatic-forecast.yml` | 01:30 UTC | what the model **predicted** for the coming morning |
-| `katabatic-archive.yml` | 20:00 UTC | what actually **happened** |
+| `katabatic-forecast.yml` | 01:30 UTC | Raw HRRR inputs plus an immutable, versioned experimental call and success chance. |
+| `katabatic-archive.yml` | 20:00 UTC | Station observations and the derived rideable/not-rideable outcome. |
 
 Neither is useful alone. The project accrues value only as matched forecast/outcome pairs.
+
+### What is and is not automated
+
+The workflow named "forecast archive" first stores the exact 00Z HRRR run's 05:00–08:00 wind and
+boundary-layer-height values in `hrrr_forecasts`. It then writes the experimental `PACK`, `MAYBE`,
+or `SLEEP IN` call and success chance to `night_before_predictions`, keyed by station, morning,
+HRRR run, and model version. Issued rows are immutable: changed logic requires a new model version
+rather than rewriting history.
+
+The current chance model is a small logistic model using average HRRR wind and lid, trained only on
+the 130 pre-2026-08-11 backfill outcomes. Its coefficients and training provenance are versioned in
+code and registered in `night_before_models`. Percentages are rounded to the nearest 5% and capped
+at 5–95% to avoid false precision. Historical materialization is explicitly marked
+`retrospective`; only predictions written by the nightly collector before the outcome are marked
+`forward`.
+
+**The research dashboard is read-only visualization.** It reads stored predictions and outcomes
+from Neon; it does not generate calls, fit the model, or calculate percentages. Until forward
+calibration is demonstrated, the stored percentage remains a research hypothesis—not a product
+probability.
+
+**No automation currently runs `/dp-katabatic-check` at 05:00 or gate−30, sends a wake-up alarm, or
+makes a live-meter decision while the user is asleep.** `/dp-katabatic-check` remains an on-demand,
+same-morning observation. Reliable local scheduling and wake-up delivery have not been built.
 
 To run any of it by hand:
 
 ```bash
 npm run archive:ecowitt   # pull recent station history into the archive
 npm run archive:forecast  # capture the 00Z model run for tomorrow morning
+npm run archive:predictions # materialize predictions for existing raw forecasts (retrospective)
 npm run refresh           # the full archive ritual: fetch, re-label, re-score
 npm run backtest          # re-score the rule against everything on record
 ```

@@ -2,8 +2,9 @@
 #
 # Per §3 of research/katabatic-prediction.md this ships NOTHING to the phone. It only accrues
 # forecast/outcome pairs, which is the one thing that cannot be bought with compute — it costs
-# calendar time. §14 found no rule good enough to act on; this exists so that a year from now
-# there is real held-out data to re-test against.
+# calendar time. The collector also materializes the versioned experimental call and chance that
+# existed before the outcome; the canvas only reads those immutable rows. §14 found no rule good
+# enough to act on, so these remain research evidence rather than a product recommendation.
 #
 # ⚠️ GitHub fires `schedule` and `workflow_dispatch` only for workflows on the DEFAULT branch.
 # On a research branch this file is inert. It becomes live when the research repo is created.

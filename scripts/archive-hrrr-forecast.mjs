@@ -25,6 +25,10 @@
 
 import axios from 'axios';
 import { query, closePool } from './lib/db.mjs';
+import {
+  persistNightBeforePrediction,
+  summarizeForecastRows,
+} from './lib/night-before-prediction-store.mjs';
 
 const SITE = { lat: 39.646115, lon: -105.174958 }; // true meter coordinate (§12.2)
 const SLUG = 'dp-soda-lakes';
@@ -128,6 +132,11 @@ async function store(date, rows) {
 const from = arg('from');
 const to = arg('to');
 const one = arg('date');
+const requestedMode = arg('mode');
+const generationMode = requestedMode || (from && to ? 'retrospective' : 'forward');
+if (!['forward', 'retrospective'].includes(generationMode)) {
+  throw new Error('--mode must be "forward" or "retrospective"');
+}
 
 let targets;
 if (from && to) {
@@ -147,9 +156,24 @@ for (const date of targets) {
   const rows = await fetchMorning(date);
   if (!rows) { skipped++; continue; }
   await store(date, rows);
+  const prediction = await persistNightBeforePrediction({
+    stationSlug: SLUG,
+    localDate: date,
+    runInit: `${date}T00:00:00Z`,
+    generationMode,
+    forecast: summarizeForecastRows(rows),
+  });
   written++;
   const lid = rows.map((r) => (Number.isFinite(r.lid) ? r.lid.toFixed(0) : '—')).join('/');
   console.log(`  ${date}: ${rows.length} hours, lid ${lid} m`);
+  if (prediction) {
+    console.log(
+      `             ${prediction.call}, ${prediction.success_chance_percent}% success ` +
+      `(${prediction.model_version}, ${prediction.generation_mode})`,
+    );
+  } else {
+    console.log('             no prediction — fewer than 3 complete HRRR hours');
+  }
   if (targets.length > 1) await sleep(220);
 }
 
