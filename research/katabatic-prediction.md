@@ -983,13 +983,51 @@ v2's `MARGINAL` (score 1) — flipping a correctly-called flat morning (`label=f
 into a false alarm. v1's now-known-incorrect neighbor penalty happened to cancel out on this
 specific morning; v2's theoretically-correct fix did not help elsewhere in the 324-morning sample.
 
-**Verdict: documented, not shipped (§7 rule 6).** The corrected neighbor logic is more defensible
+**Verdict at the time: documented, not shipped (§7 rule 6).** The corrected neighbor logic is more defensible
 in isolation — it matches the station-correlation finding in `SKILL.md` §2 — but "more defensible
 in isolation" is not the promotion bar, and an inconclusive/negative real-data result is a
-legitimate outcome to record rather than paper over. `call-rule-v1` remains the live-scoring rule.
-The live skill script still prints v2's trajectory feature descriptively (fading vs. not), because
-that framing is useful advice regardless of which rule scores the go/no-go call — it just does not
-drive the verdict.
+legitimate outcome to record rather than paper over. `call-rule-v1` remained the live-scoring rule
+until the dual-call work below.
+
+### v3–v5 dual-call correction (2026-08-19)
+
+The 2026-08-19 live call exposed a category error in v1: structural evidence could overwhelm
+amplitude. At 05:45 the direction, drying air, and quiet neighbors produced `GO (score 5)` even
+though no reading in the prior 30/60/120 minutes reached 15 mph and the latest sequence fell
+14.9 → 14.3 → 10.9 mph. The 6am hour averaged 6.0 mph.
+
+The correction separates two deterministic outputs:
+
+- **SESSION** — threshold-specific `GO / MARGINAL / NO_GO / STALE / NO_DATA`.
+- **KATABATIC STRUCTURE** — `PRESENT / POSSIBLE / ABSENT / UNKNOWN`.
+
+Structural features cannot alter the session verdict. `MARGINAL` means re-check before leaving,
+not a soft GO.
+
+The candidate thresholds were fixed before outcome comparison:
+
+- short-horizon amplitude: latest 15-minute average versus the prior 15 minutes, ±1.5 mph band;
+- severe collapse: latest reading at least 3.0 mph below the recent 30-minute peak;
+- v5 plausible floor: 60% of the requested threshold (the existing v1 hard gate);
+- the collapse-specific below-threshold suppression requires 0% of the recent readings at/above
+  the requested threshold.
+
+Paired 05:45 results over 325 observed mornings (99 rideable):
+
+| Rule | Opportunity misses (`NO_GO` on rideable) | Strict-GO TP | Strict-GO FP | Result |
+|---|---:|---:|---:|---|
+| v1 baseline | 25 | 46 | 22 | baseline |
+| v3: below-threshold flat/fading = NO_GO | 45 | 54 | 20 | rejected — suppresses too many sessions |
+| v4: near-threshold flat = MARGINAL | 34 | 52 | 19 | rejected — still exceeds v1 misses |
+| **v5: collapse-specific suppression** | **21** | **52** | **19** | **promoted** |
+
+V5 issued 102 `MARGINAL` calls; 26 were later rideable. Those are opportunity-preserving re-checks,
+not instructions to drive, so they are reported separately rather than counted as strict-GO false
+alarms. The promotion bar required opportunity misses no worse than v1, strict-GO false alarms
+lower than v1, and strict-GO rideable coverage at least v1. V5 clears all three.
+
+The live skill now uses `call-rule-v5`, logs real checks by default with second-resolution call
+times, and accepts `--no-log` for diagnostics. V1–v4 remain frozen and reproducible.
 
 ### Active-event checkpoint hold analysis (censoring-aware, n=76)
 

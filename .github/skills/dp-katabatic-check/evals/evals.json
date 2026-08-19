@@ -43,27 +43,28 @@
       "id": 3,
       "name": "marginal-at-threshold-reads-over-n-trajectory",
       "prompt": "Check the soda meter \u2014 is it going to hold over 15 for a 6 to 7 session this morning?",
-      "expected_output": "Runs the bundled script with threshold 15. If the sustained average is within ~1.5 mph of the 15 mph threshold, the response must not rely on the script's BUILDING/HOLDING/DECAYING word alone \u2014 it must read the over-N percentage trajectory across recent slices and say plainly whether the share of readings above threshold is rising or falling. A declining over-N must be described as fading even when the trend word reads HOLDING. Per the asymmetric cost function, a declining over-N must sharpen the advice (arrive at gate-open, expect the tail, don't count on the back half) rather than suppress the go. Must not fabricate readings.",
+      "expected_output": "Runs the bundled script with threshold 15 and leads with the printed call-rule-v5 SESSION verdict. Reports the short-horizon amplitude trajectory and percent-above-threshold evidence instead of relying on the broad HOLDING word. Treats MARGINAL as re-check before leaving, not as a soft GO, and reports KATABATIC STRUCTURE separately. Must not fabricate readings.",
       "files": [],
       "assertions": [
         "Cites the over-N / percent-above-threshold figure, not only the average speed and the trend word",
         "If the average sits within roughly 1.5 mph of the threshold, explicitly characterizes the event as marginal rather than implying comfort",
         "Does not treat a HOLDING trend label as proof the event is stable when the over-N percentage is declining",
-        "Still gives an actionable go/no-go rather than suppressing the morning purely because the event is marginal",
+        "Explains that MARGINAL means re-check before leaving rather than go now",
+        "Reports katabatic structure separately and does not use it to promote the session verdict",
         "Assesses the session window against sunrise and the seasonal park gate hour"
       ]
     },
     {
       "id": 4,
-      "name": "versioned-verdict-is-the-baseline",
+      "name": "versioned-dual-call-is-the-baseline",
       "prompt": "Run the soda check and tell me what you think \u2014 do you agree with the call?",
-      "expected_output": "Runs the bundled script and reads its printed `## VERSIONED VERDICT (call-rule-v1, ...)` block \u2014 the deterministic GO/MARGINAL/NO_GO/STALE verdict, score, and reasons produced by scripts/lib/call-rule.mjs. Treats this printed verdict as the baseline call rather than re-deriving a verdict purely from the AI's own qualitative reading of the five signals. If the AI's own qualitative judgment agrees with the printed verdict, says so explicitly. If it disagrees (for example, a neighbor-penalty point knocked off a morning where \u00a78 says a blowing neighbor should not count against the call), names the disagreement and the reason explicitly rather than silently overriding or silently deferring to either number.",
+      "expected_output": "Runs the bundled script and reads the call-rule-v5 `SESSION VERDICT` and `KATABATIC STRUCTURE` blocks. Leads with SESSION, explains that structure is a separate physical classification, and does not promote a below-threshold session because direction, humidity, or neighbors look katabatic.",
       "files": [],
       "assertions": [
-        "References the script's printed versioned verdict (verdict word and/or numeric score) as the starting point for the call",
-        "Does not present a final verdict that silently contradicts the printed versioned verdict without explanation",
-        "If citing a disagreement between the deterministic score and the qualitative read, explains the specific reason rather than just asserting a different number",
-        "Still delivers one clear, actionable recommendation rather than presenting two verdicts with no resolution"
+        "Leads with the printed SESSION verdict",
+        "Reports the printed KATABATIC STRUCTURE status separately",
+        "Does not treat structure as permission to drive",
+        "Explains that MARGINAL means re-check and not leave yet"
       ]
     },
     {

@@ -7,9 +7,7 @@
  *   1. It double-appended a newline on top of what `toCsvRow`/`csvHeader` already include,
  *      producing a blank row after every header and every live-logged call. Confirmed present in
  *      the checked-in `research/prediction-log.csv`.
- *   2. A second run of the local 05:45 automation on the same morning (e.g. after a retry, or a
- *      manual re-check) appended a duplicate row rather than replacing the earlier one, so the
- *      log could silently accumulate more than one "the" call for a single morning.
+ *   2. An exact retry of a call appended a duplicate row rather than replacing the earlier one.
  *
  * This module fixes both: it upserts by key rather than appending, and it writes the whole file
  * atomically (temp file + rename) under a simple directory-based lock, so two writers running
@@ -27,8 +25,9 @@ const LOCK_TIMEOUT_MS = 5000;
 
 /**
  * The identity of a "call" for upsert purposes: one row per (source, date, call_time, station,
- * rule_version). Including `rule_version` means a v1 and v2 backtest row for the same morning
- * and call time are distinct rows rather than one overwriting the other (§ pairing requirement).
+ * rule_version). Live call times include seconds, so separate checks in one minute remain separate
+ * evidence while an exact retry replaces in place. Including `rule_version` keeps paired backtest
+ * rows distinct (§ pairing requirement).
  */
 export function rowKey(row) {
   return [row.source, row.date, row.call_time, row.station, row.rule_version].join('|');
@@ -92,8 +91,8 @@ export async function upsertRows(path, newRows) {
       if (byKey.has(key)) replaced++;
       byKey.set(key, row);
     }
-    // Stable, human-scannable order: chronological, then call time, then source so paired v1/v2
-    // rows for the same morning sit next to each other.
+    // Stable, human-scannable order: chronological, then call time, then source so paired rule
+    // versions for the same morning sit next to each other.
     const all = [...byKey.values()].sort((a, b) => {
       const ad = String(a.date), bd = String(b.date);
       if (ad !== bd) return ad < bd ? -1 : 1;

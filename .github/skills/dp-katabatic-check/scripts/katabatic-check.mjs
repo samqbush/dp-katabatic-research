@@ -15,6 +15,7 @@
  *   --station <name>    Station to analyze (default "DP Soda Lakes"), case-insensitive substring match
  *   --threshold <mph>   Sustained speed the user cares about (default 15)
  *   --since <HH:MM>     Start of the overnight window to pull (default 00:00 local)
+ *   --no-log            Do not persist this diagnostic run (real checks log by default)
  */
 
 import axios from 'axios';
@@ -25,10 +26,9 @@ import { readFile } from 'fs/promises';
 import { buildLogRow } from '../../../../scripts/lib/prediction-log.mjs';
 import { upsertRow } from '../../../../scripts/lib/prediction-log-store.mjs';
 import { gateOpenHour } from '../../../../scripts/lib/season.mjs';
-import { computeFeatures, callRule } from '../../../../scripts/lib/call-rule.mjs';
-import { computeFeaturesV2 } from '../../../../scripts/lib/call-rule-v2.mjs';
+import { computeFeaturesV5, callRuleV5 } from '../../../../scripts/lib/call-rule-v5.mjs';
 import { pickGroupOrOverall } from '../../../../scripts/lib/active-hold.mjs';
-import { FEATURE_VERSION_V1, RULE_VERSION_V1 } from '../../../../scripts/lib/versions.mjs';
+import { FEATURE_VERSION_V5, RULE_VERSION_V5 } from '../../../../scripts/lib/versions.mjs';
 import {
   zonedTime,
   zonedParts,
@@ -85,16 +85,17 @@ function ecowittCreds() {
 }
 
 function parseArgs(argv) {
-  const args = { station: 'DP Soda Lakes', threshold: 15, since: '00:00', log: false, note: null };
+  const args = { station: 'DP Soda Lakes', threshold: 15, since: '00:00', log: true, note: null };
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     if (argv[i] === '--station' && next) args.station = next;
     if (argv[i] === '--threshold' && next) args.threshold = parseFloat(next);
     if (argv[i] === '--since' && next) args.since = next;
-    // Appends this morning's call to research/prediction-log.csv in exactly the shape the
+    // Persists this call to research/prediction-log.csv in exactly the shape the
     // backtest writes, so live calls and replayed ones stay directly comparable. The outcome
     // columns are left blank on purpose — the weekly refresh fills them from the meter later.
-    if (argv[i] === '--log') args.log = true;
+    if (argv[i] === '--log') args.log = true; // Backward-compatible explicit opt-in.
+    if (argv[i] === '--no-log') args.log = false;
     // The one thing the meter genuinely cannot see: whether it was actually rideable (chop,
     // ice, launch-relative direction). Always optional; nothing in the pipeline blocks on it.
     if (argv[i] === '--note' && next) args.note = next;
@@ -302,6 +303,28 @@ async function main() {
     } else {
       console.log('\n❌ NO DATA returned for today. Station is likely offline — do not guess at conditions.');
     }
+    if (args.log) {
+      const noDataCall = {
+        verdict: 'NO_DATA',
+        score: null,
+        structure: { status: 'UNKNOWN', score: null },
+      };
+      const row = buildLogRow({
+        source: 'live',
+        date: fmtStationDateTime(now).slice(0, 10),
+        callTime: fmtStationDateTime(now).slice(11, 19),
+        station: target.name,
+        threshold: args.threshold,
+        features: null,
+        call: noDataCall,
+        label: null,
+        humanNote: args.note,
+        featureVersion: FEATURE_VERSION_V5,
+        ruleVersion: RULE_VERSION_V5,
+      });
+      await upsertRow(join(REPO_ROOT, 'research', 'prediction-log.csv'), row);
+      console.log('\n📝 Logged SESSION NO_DATA / STRUCTURE UNKNOWN (outcome filled in by reconciliation)');
+    }
     process.exit(0);
   }
 
@@ -416,31 +439,27 @@ async function main() {
     }
   }
 
-  /* --- versioned deterministic verdict: shared computeFeatures/callRule (call-rule.mjs), the
-   * SAME code the backtest replays across ~330 archived mornings. This is the promoted baseline
-   * — call-rule-v1 — not an ad-hoc re-implementation. A v2 candidate (corrected neighbour signal,
-   * §8; trajectory feature) exists in call-rule-v2.mjs but did NOT clear the plan's promotion bar
-   * in the real backtest (0 misses recovered, false-alarm rate unchanged within noise — see
-   * research/katabatic-prediction.md), so v1 remains what actually drives the score below. v2's
-   * trajectory feature IS shown, descriptively, because per the plan it was never gated on
-   * promotion — it changes wording, never the verdict, in either version. */
+  /* --- versioned dual call: session readiness is independent from katabatic structure. --- */
   const callTimeTs = Math.floor(now.getTime() / 1000);
   const sunriseTs = sunrise ? Math.floor(sunrise.getTime() / 1000) : null;
   const featureOpts = { station: target.name, threshold: args.threshold, sunriseTs, neighborSeries };
-  const features = computeFeatures(points, callTimeTs, featureOpts);
-  const call = callRule(features, { threshold: args.threshold });
-  const featuresV2 = computeFeaturesV2(points, callTimeTs, featureOpts); // descriptive trajectory only
+  const features = computeFeaturesV5(points, callTimeTs, featureOpts);
+  const call = callRuleV5(features, { threshold: args.threshold });
 
-  console.log(`\n## VERSIONED VERDICT (${RULE_VERSION_V1}, deterministic — treat as the baseline)`);
-  console.log(`${call.verdict}${call.score !== null ? `  (score ${call.score})` : ''}`);
+  console.log(`\n## SESSION VERDICT (${RULE_VERSION_V5}, threshold ${args.threshold} mph)`);
+  console.log(`SESSION: ${call.verdict}`);
   for (const reason of call.reasons) console.log(`  - ${reason}`);
-  if (featuresV2?.pctOverThresholdTrendDelta !== null && featuresV2?.pctOverThresholdTrendDelta <= -20) {
+  if (features?.amplitudeTrend) {
     console.log(
-      `  ⚠️  over-${args.threshold} share fell ${Math.abs(featuresV2.pctOverThresholdTrendDelta).toFixed(0)}pp over the last hour ` +
-        `(slices: ${featuresV2.pctOverThresholdSlices.map((s) => (s === null ? 'n/a' : `${s.toFixed(0)}%`)).join(' → ')}) ` +
-        `— this is fading regardless of what the mean Trend word says. Sharpen the advice; do not suppress a go.`
+      `  - short-horizon amplitude: ${features.amplitudeTrend} ` +
+        `(${features.amplitudeDelta15 >= 0 ? '+' : ''}${features.amplitudeDelta15.toFixed(1)} mph; ` +
+        `latest ${mph(features.latestSpeed)}, recent peak ${mph(features.recentPeak30)})`
     );
   }
+
+  console.log(`\n## KATABATIC STRUCTURE`);
+  console.log(`KATABATIC STRUCTURE: ${call.structure.status}`);
+  for (const reason of call.structure.reasons) console.log(`  - ${reason}`);
 
   /* --- if an event is already running, show measured checkpoint hold history (§4). This is a
    * SEPARATE question from the verdict above: not "should you go" but "given it's already
@@ -475,7 +494,7 @@ async function main() {
 
   console.log(`\n${'='.repeat(72)}`);
 
-  /* --- optional: persist this call to the prediction log ---
+  /* --- persist every real call to the prediction log unless --no-log is supplied ---
    *
    * Same CSV shape the backtest emits, so a live morning and a replayed one are directly
    * comparable. Outcome columns (label, sustained_minutes, ...) are deliberately left blank:
@@ -483,27 +502,27 @@ async function main() {
    * very ground truth the log exists to provide. `scripts/reconcile-live-log.mjs` fills them in
    * once the archive has the day. Written via the atomic upsert store (scripts/lib/
    * prediction-log-store.mjs), which also fixes the double-newline defect the old
-   * appendFileSync-based writer had, and de-duplicates a same-morning re-run by key rather than
-   * appending a second row for it.
+   * appendFileSync-based writer had, and de-duplicates an exact retry by key rather than appending
+   * a second row for the same second/rule.
    */
   if (args.log) {
     const row = buildLogRow({
       source: 'live',
       date: fmtStationDateTime(now).slice(0, 10),
-      callTime: fmtStationDateTime(now).slice(11, 16),
+      callTime: fmtStationDateTime(now).slice(11, 19),
       station: target.name,
       threshold: args.threshold,
       features,
       call,
       label: null,
       humanNote: args.note,
-      featureVersion: FEATURE_VERSION_V1,
-      ruleVersion: RULE_VERSION_V1,
+      featureVersion: FEATURE_VERSION_V5,
+      ruleVersion: RULE_VERSION_V5,
     });
 
     const logPath = join(REPO_ROOT, 'research', 'prediction-log.csv');
     await upsertRow(logPath, row);
-    console.log(`\n📝 Logged ${call.verdict} (score ${call.score}) to research/prediction-log.csv (outcome filled in by reconciliation)`);
+    console.log(`\n📝 Logged SESSION ${call.verdict} / STRUCTURE ${call.structure.status} to research/prediction-log.csv (outcome filled in by reconciliation)`);
   }
 }
 

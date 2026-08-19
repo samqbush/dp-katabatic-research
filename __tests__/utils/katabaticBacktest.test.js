@@ -1,6 +1,23 @@
 import { computeFeatures, callRule, circularMean, angularDiff, inRange, verdictToBinary } from '@/scripts/lib/call-rule.mjs';
 import { computeFeaturesV2, callRuleV2 } from '@/scripts/lib/call-rule-v2.mjs';
 import {
+  computeFeaturesV3,
+  callRuleV3,
+  classifyKatabaticStructure,
+  sessionRuleV3,
+} from '@/scripts/lib/call-rule-v3.mjs';
+import {
+  computeFeaturesV4,
+  callRuleV4,
+  sessionRuleV4,
+} from '@/scripts/lib/call-rule-v4.mjs';
+import {
+  computeFeaturesV5,
+  callRuleV5,
+  classifyKatabaticStructureV5,
+  sessionRuleV5,
+} from '@/scripts/lib/call-rule-v5.mjs';
+import {
   checkpointStatus,
   findEventEnd,
   analyzeActiveDay,
@@ -10,7 +27,14 @@ import {
 } from '@/scripts/lib/active-hold.mjs';
 import { upsertRows, upsertRow, readAllRows, rowKey } from '@/scripts/lib/prediction-log-store.mjs';
 import { buildLogRow } from '@/scripts/lib/prediction-log.mjs';
-import { FEATURE_VERSION_V1, RULE_VERSION_V1, RULE_VERSION_V2 } from '@/scripts/lib/versions.mjs';
+import {
+  FEATURE_VERSION_V1,
+  RULE_VERSION_V1,
+  RULE_VERSION_V2,
+  RULE_VERSION_V3,
+  RULE_VERSION_V4,
+  RULE_VERSION_V5,
+} from '@/scripts/lib/versions.mjs';
 import { labelDay } from '@/scripts/lib/label.mjs';
 import {
   buildExperimentalNightBeforePrediction,
@@ -449,6 +473,243 @@ describe('feature parity — v2 is a strict superset of v1 on every shared field
   });
 });
 
+describe('call-rule-v3 — session and structure are independent', () => {
+  it('classifies 2026-08-19 as structure present but session NO_GO', () => {
+    const points = makeDay('2026-08-19', [
+      { minute: 4 * 60 + 40, speed: 10.7, dir: 279, rh: 50 },
+      { minute: 4 * 60 + 45, speed: 12.3, dir: 279, rh: 50 },
+      { minute: 4 * 60 + 50, speed: 11.1, dir: 263, rh: 51 },
+      { minute: 4 * 60 + 55, speed: 10.9, dir: 270, rh: 51 },
+      { minute: 5 * 60, speed: 11.6, dir: 287, rh: 52 },
+      { minute: 5 * 60 + 5, speed: 12.8, dir: 288, rh: 52 },
+      { minute: 5 * 60 + 10, speed: 12.5, dir: 285, rh: 51 },
+      { minute: 5 * 60 + 15, speed: 13.3, dir: 285, rh: 51 },
+      { minute: 5 * 60 + 20, speed: 13.8, dir: 299, rh: 50 },
+      { minute: 5 * 60 + 25, speed: 14.9, dir: 308, rh: 49 },
+      { minute: 5 * 60 + 30, speed: 14.3, dir: 298, rh: 47 },
+      { minute: 5 * 60 + 35, speed: 10.9, dir: 295, rh: 47 },
+    ]);
+    const callTs = makeDay('2026-08-19', [{ minute: 5 * 60 + 45, speed: 0 }])[0].ts;
+    const quietNeighbor = constantDay('2026-08-19', {
+      fromMinute: 4 * 60,
+      toMinute: 6 * 60,
+      speed: 3,
+      dir: 180,
+      rh: 50,
+    });
+    const f = computeFeaturesV3(points, callTs, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+      neighborSeries: [quietNeighbor],
+    });
+    const call = callRuleV3(f, { threshold: 15 });
+
+    expect(f.avg30).toBeCloseTo(13.475, 3);
+    expect(f.pctOverThreshold30).toBe(0);
+    expect(f.amplitudeTrend).toBe('FADING');
+    expect(call.verdict).toBe('NO_GO');
+    expect(call.structure.status).toBe('PRESENT');
+  });
+
+  it('returns MARGINAL for a genuine below-threshold short-horizon build', () => {
+    const points = makeDay('2026-07-15', [
+      { minute: 5 * 60 + 15, speed: 9 },
+      { minute: 5 * 60 + 20, speed: 9 },
+      { minute: 5 * 60 + 25, speed: 9 },
+      { minute: 5 * 60 + 30, speed: 9 },
+      { minute: 5 * 60 + 35, speed: 13 },
+      { minute: 5 * 60 + 40, speed: 13 },
+      { minute: 5 * 60 + 45, speed: 13 },
+    ]);
+    const callTs = points[points.length - 1].ts;
+    const f = computeFeaturesV3(points, callTs, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+    });
+    expect(f.amplitudeTrend).toBe('BUILDING');
+    expect(sessionRuleV3(f, { threshold: 15 }).verdict).toBe('MARGINAL');
+  });
+
+  it('returns GO only for an active event without a severe final collapse', () => {
+    const stable = constantDay('2026-07-15', {
+      fromMinute: 5 * 60,
+      toMinute: 5 * 60 + 35,
+      speed: 16,
+    });
+    const stableFeatures = computeFeaturesV3(stable, stable[stable.length - 1].ts, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+    });
+    expect(sessionRuleV3(stableFeatures, { threshold: 15 }).verdict).toBe('GO');
+
+    const collapsing = makeDay('2026-07-15', [
+      { minute: 5 * 60 + 15, speed: 20 },
+      { minute: 5 * 60 + 20, speed: 20 },
+      { minute: 5 * 60 + 25, speed: 20 },
+      { minute: 5 * 60 + 30, speed: 20 },
+      { minute: 5 * 60 + 35, speed: 16 },
+      { minute: 5 * 60 + 40, speed: 14 },
+      { minute: 5 * 60 + 45, speed: 13 },
+    ]);
+    const collapseFeatures = computeFeaturesV3(
+      collapsing,
+      collapsing[collapsing.length - 1].ts,
+      { station: 'DP Soda Lakes', threshold: 15 }
+    );
+    expect(collapseFeatures.avg30).toBeGreaterThanOrEqual(15);
+    expect(sessionRuleV3(collapseFeatures, { threshold: 15 }).verdict).toBe('MARGINAL');
+  });
+
+  it('does not let structural evidence alter the session verdict', () => {
+    const points = constantDay('2026-07-15', {
+      fromMinute: 5 * 60,
+      toMinute: 5 * 60 + 35,
+      speed: 12,
+      dir: 297,
+      rh: 40,
+    });
+    const f = computeFeaturesV3(points, points[points.length - 1].ts, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+    });
+    const baseline = sessionRuleV3(f, { threshold: 15 });
+    const hostileStructure = sessionRuleV3(
+      {
+        ...f,
+        inIdealPct: 0,
+        dirConsistency: 0,
+        rhDelta: 20,
+        neighborMax: 40,
+        trend: 'DECAYING',
+      },
+      { threshold: 15 }
+    );
+    expect(hostileStructure).toEqual(baseline);
+    expect(classifyKatabaticStructure(f).status).not.toBe('UNKNOWN');
+  });
+
+  it('keeps every new feature behind the no-lookahead barrier', () => {
+    const past = constantDay('2026-07-15', {
+      fromMinute: 5 * 60,
+      toMinute: 5 * 60 + 45,
+      speed: 12,
+    });
+    const future = constantDay('2026-07-15', {
+      fromMinute: 5 * 60 + 45,
+      toMinute: 7 * 60,
+      speed: 30,
+    });
+    const callTs = past[past.length - 1].ts;
+    const opts = { station: 'DP Soda Lakes', threshold: 15 };
+    expect(computeFeaturesV3([...past, ...future], callTs, opts)).toEqual(
+      computeFeaturesV3(past, callTs, opts)
+    );
+  });
+
+  it('exports a distinct frozen rule version', () => {
+    expect(RULE_VERSION_V3).toBe('call-rule-v3');
+  });
+});
+
+describe('call-rule-v4 — near-threshold opportunity preservation', () => {
+  it('keeps a flat near-threshold setup MARGINAL rather than suppressing it', () => {
+    const points = constantDay('2026-07-15', {
+      fromMinute: 5 * 60,
+      toMinute: 5 * 60 + 35,
+      speed: 13.5,
+    });
+    const f = computeFeaturesV4(points, points[points.length - 1].ts, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+    });
+    expect(f.amplitudeTrend).toBe('FLAT');
+    expect(sessionRuleV4(f, { threshold: 15 }).verdict).toBe('MARGINAL');
+  });
+
+  it('still classifies the 2026-08-19 collapse NO_GO with structure present', () => {
+    const points = makeDay('2026-08-19', [
+      { minute: 5 * 60 + 15, speed: 13.3, dir: 285, rh: 51 },
+      { minute: 5 * 60 + 20, speed: 13.8, dir: 299, rh: 50 },
+      { minute: 5 * 60 + 25, speed: 14.9, dir: 308, rh: 49 },
+      { minute: 5 * 60 + 30, speed: 14.3, dir: 298, rh: 47 },
+      { minute: 5 * 60 + 35, speed: 10.9, dir: 295, rh: 47 },
+    ]);
+    const callTs = makeDay('2026-08-19', [
+      { minute: 5 * 60 + 45, speed: 0 },
+    ])[0].ts;
+    const f = computeFeaturesV4(points, callTs, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+      neighborSeries: [
+        constantDay('2026-08-19', {
+          fromMinute: 5 * 60,
+          toMinute: 6 * 60,
+          speed: 3,
+        }),
+      ],
+    });
+    const call = callRuleV4(f, { threshold: 15 });
+    expect(call.verdict).toBe('NO_GO');
+    expect(call.structure.status).toBe('PRESENT');
+  });
+
+  it('exports a distinct frozen rule version', () => {
+    expect(RULE_VERSION_V4).toBe('call-rule-v4');
+  });
+});
+
+describe('call-rule-v5 — collapse-specific suppression', () => {
+  it('keeps plausible sub-threshold flat wind MARGINAL', () => {
+    const points = constantDay('2026-07-15', {
+      fromMinute: 5 * 60,
+      toMinute: 5 * 60 + 35,
+      speed: 10,
+    });
+    const f = computeFeaturesV5(points, points[points.length - 1].ts, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+    });
+    expect(sessionRuleV5(f, { threshold: 15 }).verdict).toBe('MARGINAL');
+  });
+
+  it('suppresses a never-reached-threshold severe collapse', () => {
+    const points = makeDay('2026-08-19', [
+      { minute: 5 * 60 + 15, speed: 13.3, dir: 285 },
+      { minute: 5 * 60 + 20, speed: 13.8, dir: 299 },
+      { minute: 5 * 60 + 25, speed: 14.9, dir: 308 },
+      { minute: 5 * 60 + 30, speed: 14.3, dir: 298 },
+      { minute: 5 * 60 + 35, speed: 10.9, dir: 295 },
+    ]);
+    const callTs = makeDay('2026-08-19', [
+      { minute: 5 * 60 + 45, speed: 0 },
+    ])[0].ts;
+    const f = computeFeaturesV5(points, callTs, {
+      station: 'DP Soda Lakes',
+      threshold: 15,
+    });
+    expect(f.pctOverThreshold30).toBe(0);
+    expect(callRuleV5(f, { threshold: 15 }).verdict).toBe('NO_GO');
+  });
+
+  it('exports a distinct frozen rule version', () => {
+    expect(RULE_VERSION_V5).toBe('call-rule-v5');
+  });
+
+  it('does not call daytime off-axis wind a possible katabatic structure', () => {
+    expect(
+      classifyKatabaticStructureV5({
+        avg30: 4,
+        latestAgeMinutes: 5,
+        inIdealPct: 0,
+        rhDelta: -20,
+        neighborMax: 2,
+        trend: 'HOLDING',
+        minutesPastSunrise: 180,
+      }).status
+    ).toBe('ABSENT');
+  });
+});
+
 describe('active-hold — censoring and gaps are never read as an observed death', () => {
   const HOUR_ = 3600;
 
@@ -616,5 +877,11 @@ describe('prediction-log-store — atomic upsert and deduplication', () => {
     expect(rowKey(a)).toBe(rowKey(b));
     const c = row({ ruleVersion: RULE_VERSION_V2 });
     expect(rowKey(a)).not.toBe(rowKey(c));
+  });
+
+  it('keeps distinct live checks in the same minute when seconds differ', () => {
+    const first = row({ source: 'live', callTime: '05:45:10' });
+    const second = row({ source: 'live', callTime: '05:45:40' });
+    expect(rowKey(first)).not.toBe(rowKey(second));
   });
 });

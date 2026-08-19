@@ -20,6 +20,9 @@ import { join } from 'path';
 import { REPO_ROOT, SUNRISE_COORDS } from './lib/ecowitt.mjs';
 import { computeFeatures, callRule, FEATURE_VERSION as FEATURE_VERSION_V1, RULE_VERSION as RULE_VERSION_V1 } from './lib/call-rule.mjs';
 import { computeFeaturesV2, callRuleV2, FEATURE_VERSION as FEATURE_VERSION_V2, RULE_VERSION as RULE_VERSION_V2 } from './lib/call-rule-v2.mjs';
+import { computeFeaturesV3, callRuleV3, FEATURE_VERSION as FEATURE_VERSION_V3, RULE_VERSION as RULE_VERSION_V3 } from './lib/call-rule-v3.mjs';
+import { computeFeaturesV4, callRuleV4, FEATURE_VERSION as FEATURE_VERSION_V4, RULE_VERSION as RULE_VERSION_V4 } from './lib/call-rule-v4.mjs';
+import { computeFeaturesV5, callRuleV5, FEATURE_VERSION as FEATURE_VERSION_V5, RULE_VERSION as RULE_VERSION_V5 } from './lib/call-rule-v5.mjs';
 import { labelDay, parseArchiveDate, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
 import { calcSunrise } from './lib/sunrise.mjs';
 import { buildLogRow } from './lib/prediction-log.mjs';
@@ -152,6 +155,82 @@ async function main() {
           })
         );
       }
+
+      // v3 — separates threshold-specific session readiness from katabatic structure.
+      const featuresV3 = computeFeaturesV3(rec.points, callTs, {
+        station: rec.station,
+        threshold: args.threshold,
+        sunriseTs,
+        neighborSeries,
+      });
+      if (featuresV3) {
+        const callV3 = callRuleV3(featuresV3, { threshold: args.threshold });
+        rows.push(
+          buildLogRow({
+            source: 'backtest',
+            date,
+            callTime: fmtHM(m),
+            station: rec.station,
+            threshold: args.threshold,
+            features: featuresV3,
+            call: callV3,
+            label,
+            featureVersion: FEATURE_VERSION_V3,
+            ruleVersion: RULE_VERSION_V3,
+          })
+        );
+      }
+
+      // v4 — preserves near-threshold late builders as MARGINAL while keeping severe collapses
+      // and materially sub-threshold setups at NO_GO.
+      const featuresV4 = computeFeaturesV4(rec.points, callTs, {
+        station: rec.station,
+        threshold: args.threshold,
+        sunriseTs,
+        neighborSeries,
+      });
+      if (featuresV4) {
+        const callV4 = callRuleV4(featuresV4, { threshold: args.threshold });
+        rows.push(
+          buildLogRow({
+            source: 'backtest',
+            date,
+            callTime: fmtHM(m),
+            station: rec.station,
+            threshold: args.threshold,
+            features: featuresV4,
+            call: callV4,
+            label,
+            featureVersion: FEATURE_VERSION_V4,
+            ruleVersion: RULE_VERSION_V4,
+          })
+        );
+      }
+
+      // v5 — suppresses only materially weak or never-reached-and-collapsing amplitude.
+      const featuresV5 = computeFeaturesV5(rec.points, callTs, {
+        station: rec.station,
+        threshold: args.threshold,
+        sunriseTs,
+        neighborSeries,
+      });
+      if (featuresV5) {
+        const callV5 = callRuleV5(featuresV5, { threshold: args.threshold });
+        rows.push(
+          buildLogRow({
+            source: 'backtest',
+            date,
+            callTime: fmtHM(m),
+            station: rec.station,
+            threshold: args.threshold,
+            features: featuresV5,
+            call: callV5,
+            label,
+            featureVersion: FEATURE_VERSION_V5,
+            ruleVersion: RULE_VERSION_V5,
+          })
+        );
+      }
     }
   }
 
@@ -178,9 +257,12 @@ async function main() {
   console.log(`Excluded (unobserved, never counted as calm): ${unobserved}`);
   console.log(`Rideable mornings:  ${positives} (${((positives / dayLabels.length) * 100).toFixed(1)}% base rate, gate-conditioned)`);
   console.log(`Blew well but before the gate opened: ${missedByGate}`);
-  console.log(`Rows written (v1+v2 paired): ${rows.length} → ${args.out} (${result.total} total rows in file)`);
+  console.log(`Rows written (v1+v2+v3+v4+v5 paired): ${rows.length} → ${args.out} (${result.total} total rows in file)`);
   console.log(`\nNext: node scripts/score-backtest.mjs --rule-version call-rule-v1`);
   console.log(`      node scripts/score-backtest.mjs --rule-version call-rule-v2`);
+  console.log(`      node scripts/score-backtest.mjs --rule-version call-rule-v3`);
+  console.log(`      node scripts/score-backtest.mjs --rule-version call-rule-v4`);
+  console.log(`      node scripts/score-backtest.mjs --rule-version call-rule-v5`);
 }
 
 main()

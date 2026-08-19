@@ -19,7 +19,7 @@
  * on recall — it is competing on how many pointless early alarms it removes *while* missing
  * essentially nothing. That, and only that, is the value on offer.
  *
- * Defaults to the actual automated call time, 05:45 Colorado, and to rule_version=call-rule-v1.
+ * Defaults to the actual automated call time, 05:45 Colorado, and to the promoted live rule.
  * A prior version of this scorer defaulted to 05:30, which nothing in the pipeline ever actually
  * calls at — that was a disconnected number, not a baseline.
  *
@@ -33,7 +33,12 @@ import { join } from 'path';
 import { REPO_ROOT } from './lib/ecowitt.mjs';
 import { parseCsv } from './lib/prediction-log.mjs';
 import { verdictToBinary } from './lib/call-rule.mjs';
-import { RULE_VERSION_V1 } from './lib/versions.mjs';
+import {
+  RULE_VERSION_V1,
+  RULE_VERSION_V3,
+  RULE_VERSION_V4,
+  RULE_VERSION_V5,
+} from './lib/versions.mjs';
 import { gateOpenHour } from './lib/season.mjs';
 
 const DEFAULT_LOG = join(REPO_ROOT, 'research', 'prediction-log.csv');
@@ -45,7 +50,7 @@ const DEFAULT_LOG = join(REPO_ROOT, 'research', 'prediction-log.csv');
 const ACTUAL_CALL_TIME = '05:45';
 
 function parseArgs(argv) {
-  const args = { callTime: ACTUAL_CALL_TIME, log: DEFAULT_LOG, ruleVersion: RULE_VERSION_V1 };
+  const args = { callTime: ACTUAL_CALL_TIME, log: DEFAULT_LOG, ruleVersion: RULE_VERSION_V5 };
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     if (argv[i] === '--call-time' && next) args.callTime = next;
@@ -106,7 +111,9 @@ async function main() {
     process.exit(1);
   }
 
-  const rows = parseCsv(text)
+  const allRows = parseCsv(text);
+  const rows = allRows
+    .filter((r) => r.source === 'backtest')
     .filter((r) => r.call_time === args.callTime)
     .filter((r) => (r.rule_version ?? RULE_VERSION_V1) === args.ruleVersion)
     // An empty label means unobserved. It must never be coerced to false (§4.2).
@@ -117,6 +124,16 @@ async function main() {
     console.error(`❌ No scorable rows at call time ${args.callTime} for rule_version=${args.ruleVersion}.`);
     process.exit(1);
   }
+
+  const isThreeWayRule =
+    args.ruleVersion === RULE_VERSION_V3 ||
+    args.ruleVersion === RULE_VERSION_V4 ||
+    args.ruleVersion === RULE_VERSION_V5;
+  const isOpportunityVerdict = (verdict) =>
+    verdict === 'GO' ||
+    verdict === 'MARGINAL' ||
+    verdict === 'STALE' ||
+    verdict === 'NO_DATA';
 
   const days = rows.map((r) => {
     const [y, m] = r.date.split('-').map(Number);
@@ -130,7 +147,11 @@ async function main() {
       month: r.date.slice(0, 7),
       actual: r.label === 'true',
       verdict: r.verdict,
-      predicted: verdictToBinary(r.verdict),
+      predicted:
+        isThreeWayRule
+          ? isOpportunityVerdict(r.verdict)
+          : verdictToBinary(r.verdict),
+      strictGo: r.verdict === 'GO',
       inSeason,
       leadMinutes,
     };
@@ -165,6 +186,77 @@ async function main() {
   printMetrics('baseline: never go', alwaysNo);
   printMetrics('baseline: persistence', persistence);
   printMetrics(`>> ${args.ruleVersion}`, rule);
+
+  let strictGoMetrics = null;
+  if (isThreeWayRule) {
+    const strictGo = metrics(
+      days.map((d) => ({ predicted: d.strictGo, actual: d.actual }))
+    );
+    strictGoMetrics = strictGo;
+    printMetrics(`>> ${args.ruleVersion} strict GO`, strictGo);
+
+    const marginal = days.filter((d) => d.verdict === 'MARGINAL');
+    const marginalRideable = marginal.filter((d) => d.actual).length;
+    const unknown = days.filter(
+      (d) => d.verdict === 'STALE' || d.verdict === 'NO_DATA'
+    );
+    console.log(
+      `\n${args.ruleVersion} three-way detail: MARGINAL n=${marginal.length}, rideable=${marginalRideable} ` +
+        `(${marginal.length ? ((marginalRideable / marginal.length) * 100).toFixed(1) : 'n/a'}%); ` +
+        `STALE/NO_DATA n=${unknown.length}`
+    );
+
+    const suppressedRideable = days
+      .filter((d) => !d.predicted && d.actual)
+      .map((d) => d.date);
+    console.log(
+      `${args.ruleVersion} rideable mornings classified NO_GO (${suppressedRideable.length}): ` +
+        `${suppressedRideable.join(', ') || 'none'}`
+    );
+
+    const v1ByDate = new Map(
+      allRows
+        .filter((r) => r.source === 'backtest')
+        .filter((r) => r.call_time === args.callTime)
+        .filter((r) => (r.rule_version ?? RULE_VERSION_V1) === RULE_VERSION_V1)
+        .filter((r) => r.label === 'true' || r.label === 'false')
+        .map((r) => [
+          r.date,
+          {
+            predicted: verdictToBinary(r.verdict),
+            actual: r.label === 'true',
+            strictGo: r.verdict === 'GO',
+          },
+        ])
+    );
+    const pairedV1 = days
+      .filter((d) => v1ByDate.has(d.date))
+      .map((d) => v1ByDate.get(d.date));
+    const v1Opportunity = metrics(pairedV1);
+    const v1Strict = metrics(
+      pairedV1.map((d) => ({ predicted: d.strictGo, actual: d.actual }))
+    );
+    const promotionPass =
+      rule.fn <= v1Opportunity.fn &&
+      strictGo.fp < v1Strict.fp &&
+      strictGo.tp >= v1Strict.tp;
+    console.log(`\n${args.ruleVersion} promotion gate (paired with v1):`);
+    console.log(
+      `  opportunity misses: candidate ${rule.fn} <= v1 ${v1Opportunity.fn} — ${rule.fn <= v1Opportunity.fn ? 'PASS' : 'FAIL'}`
+    );
+    console.log(
+      `  strict-GO false alarms: candidate ${strictGo.fp} < v1 ${v1Strict.fp} — ${strictGo.fp < v1Strict.fp ? 'PASS' : 'FAIL'}`
+    );
+    console.log(
+      `  strict-GO rideable coverage: candidate TP ${strictGo.tp} >= v1 TP ${v1Strict.tp} — ${strictGo.tp >= v1Strict.tp ? 'PASS' : 'FAIL'}`
+    );
+    console.log(
+      `  MARGINAL outcomes are reported above as re-checks, not counted as wasted-drive false alarms.`
+    );
+    console.log(
+      `  overall: ${promotionPass ? 'PASS' : `FAIL — do not promote ${args.ruleVersion}`}`
+    );
+  }
 
   // --- In-season (Mar-Oct, the rider's actual season per §4.5b) vs out-of-season, and by the
   // 05:45 lead time before gate-open. These are two different splits of the SAME dimension (gate
@@ -233,10 +325,25 @@ async function main() {
   const beatsPersistence = ruleMissed <= persistenceMissed && ruleFalseAlarm <= (persistence.falseAlarmRate ?? 1);
   const savesTrips = alwaysYes.falseAlarmRate !== null ? alwaysYes.falseAlarmRate - ruleFalseAlarm : 0;
 
-  console.log(`Missed sessions:  ${rule.fn} of ${rule.positives} rideable mornings (${pct(ruleMissed).trim()})`);
-  console.log(`False alarms:     ${rule.fp} of ${rule.fp + rule.tn} flat mornings (${pct(ruleFalseAlarm).trim()})`);
-  console.log(`Wasted trips avoided vs. "always go and look": ${(savesTrips * 100).toFixed(1)} percentage points`);
-  console.log(`Beats persistence on both axes: ${beatsPersistence ? 'YES' : 'NO'}`);
+  if (isThreeWayRule) {
+    const marginalFlat = days.filter(
+      (d) => d.verdict === 'MARGINAL' && !d.actual
+    ).length;
+    console.log(
+      `Opportunity misses: ${rule.fn} of ${rule.positives} rideable mornings (${pct(ruleMissed).trim()})`
+    );
+    console.log(
+      `Strict-GO false alarms: ${strictGoMetrics.fp} of ${strictGoMetrics.fp + strictGoMetrics.tn} flat mornings (${pct(strictGoMetrics.falseAlarmRate).trim()})`
+    );
+    console.log(
+      `MARGINAL flat-morning re-checks: ${marginalFlat} (not instructions to drive)`
+    );
+  } else {
+    console.log(`Missed sessions:  ${rule.fn} of ${rule.positives} rideable mornings (${pct(ruleMissed).trim()})`);
+    console.log(`False alarms:     ${rule.fp} of ${rule.fp + rule.tn} flat mornings (${pct(ruleFalseAlarm).trim()})`);
+    console.log(`Wasted trips avoided vs. "always go and look": ${(savesTrips * 100).toFixed(1)} percentage points`);
+    console.log(`Beats persistence on both axes: ${beatsPersistence ? 'YES' : 'NO'}`);
+  }
 
   if (rule.fn > 0) {
     console.log(
@@ -245,7 +352,7 @@ async function main() {
         `   false-alarm column before shipping anything that suppresses a morning.`
     );
   }
-  if (!beatsPersistence) {
+  if (!isThreeWayRule && !beatsPersistence) {
     console.log(
       `\n⚠️  §7 rule 6: not beating the baselines is a legitimate result. Document it and ship\n` +
         `   nothing rather than shipping a number that reads as insight but is not.`

@@ -52,41 +52,30 @@ Useful flags:
 - `--station "DP Standley West"` — a different meter (default is `DP Soda Lakes`)
 - `--threshold 12` — the sustained speed the user actually needs (default 15)
 - `--since 20:00` — pull further back, e.g. to see the full overnight build
-- `--log` — persist this call to `research/prediction-log.csv` (upserted, not appended — a
-  re-run for the same morning updates the row instead of duplicating it). Worth doing on any
-  morning you make a real call: it is what keeps the validation dataset honest. The verdict and
-  score ARE recorded (they come from the versioned rule below, not from your own judgment) —
-  only the outcome columns (label, sustained_minutes, ...) are left blank, filled in later by
-  `scripts/reconcile-live-log.mjs` during the archive refresh. Never fill those yourself.
+- Real calls log automatically to `research/prediction-log.csv`. Distinct checks keep their
+  second-resolution call time; an exact retry replaces the same row. Only the outcome columns
+  (label, sustained_minutes, ...) remain blank until `scripts/reconcile-live-log.mjs` fills them
+  from the archive. Never fill those yourself.
+- `--no-log` — diagnostic-only run that must not be persisted.
 - `--note "..."` — optional free text for the one thing the meter cannot see: whether it was
   *actually* rideable (chop, ice, launch-relative direction). Use it only when the user tells
   you how it went. Never invent one.
 
-## The versioned verdict is the baseline — read it before you read anything else
+## Read the two versioned calls before anything else
 
-The script prints a `## VERSIONED VERDICT (call-rule-v1, ...)` block: a deterministic GO /
-MARGINAL / NO_GO / STALE call with a score and reasons, computed by the same code
-(`scripts/lib/call-rule.mjs`) the backtest replays across ~330 archived mornings
-(`research/katabatic-prediction.md` §7). **This is not one more signal to weigh alongside your
-own reading — it is the baseline call.** Your job in Steps 2–4 below is to add color, catch
-anything the rule can't see (chop, ice, launch angle, how today's setup compares narratively to
-similar archived mornings), and — if your qualitative read genuinely disagrees with the printed
-verdict — say so **explicitly**, with the reason, rather than silently overriding it or silently
-parroting it without checking.
+The script prints two deliberately separate deterministic results from `call-rule-v5`:
 
-A known, deliberate case where they can disagree: v1's score still subtracts a point when a
-neighbor station is also blowing hard (`ratio > 0.9`). §8's research and the neighbor-contrast
-guidance below say a blowing neighbor should never argue against a session — a corrected version
-of the rule (`call-rule-v2.mjs`) removes that subtraction. **It was built and backtested, and it
-did not clear the promotion bar**: against the real archive it recovered zero of v1's missed
-rideable mornings and made the false-alarm rate very slightly worse (one flipped morning,
-2026-04-18, where v1's old penalty happened to be the correct call). So v1 — with the
-subtraction — stays the one that actually drives the score, and this is documented, not a bug.
-If you see a neighbor-driven point knocked off a real morning, say plainly: "the deterministic
-score docked a point for Standley also blowing; per the research (§8) that shouldn't count
-against you, so treat this as one point better than shown." That is the intended way to use this
-skill — deterministic score as ground truth, judgment layered visibly on top, disagreement named
-instead of hidden.
+1. `SESSION: GO / MARGINAL / NO_GO / STALE / NO_DATA` — threshold-specific and shown first.
+2. `KATABATIC STRUCTURE: PRESENT / POSSIBLE / ABSENT / UNKNOWN` — the physical drainage setup.
+
+**Never turn structure into permission to drive.** A weak real drainage pulse can be
+`STRUCTURE PRESENT / SESSION NO_GO`. The session classifier reads amplitude, trajectory, meter
+freshness, gate, and sunrise timing; direction, humidity, and neighbors cannot promote it.
+
+`GO` means the requested sustained threshold is running now. `MARGINAL` means re-check before
+leaving; it is not a soft GO. `NO_GO` means do not leave for the requested threshold. Add meter
+color and any user-reported rideability context, but do not silently replace the versioned
+session verdict.
 
 If the event is **already running** (30-min average at/above threshold now), the script also
 prints `## ACTIVE-EVENT HOLD HISTORY`: real measured hold rates at gate-open, gate+30, and
@@ -106,8 +95,8 @@ the user the meter is down. A confident guess here can send someone on a wasted 
 
 ## Step 2: Read the five signals
 
-The script prints facts; you supply the judgment. Weigh these together — no single one is
-decisive, and the strength of the call comes from whether they agree.
+Use these signals to explain the structure status and session window. Do not recombine them into
+a replacement session score; amplitude and access drive the versioned session verdict.
 
 **Direction lock.** The most reliable tell. Sustained readings inside the station's ideal window
 (270°–330° at Soda, perfect ~297°) with high consistency means a real drainage jet. Direction
@@ -140,10 +129,9 @@ averaging 15, say that it's marginal rather than implying comfort.
 > explicitly — *"averaging 15, but the share of readings above 15 has halved in 45 minutes; this
 > is fading, not holding."*
 >
-> **This changes the wording, not the verdict.** Per §2 a missed session costs the whole morning
-> against a five-minute look, so never use a declining `over-N` to suppress a go. Use it to
-> sharpen the advice: be at the gate on the minute, expect the tail rather than the peak, and
-> don't count on the back half of the window.
+> `call-rule-v5` evaluates short-horizon amplitude directly. A setup that never reached the
+> requested threshold and then suffers a severe collapse is `NO_GO`; plausible sub-threshold
+> wind remains `MARGINAL` so late builders are not discarded.
 
 **Drying air.** Falling humidity overnight indicates the clear-sky radiative cooling that drives
 drainage flow. Rising humidity or a cloud deck undercuts the mechanism, and an event running
@@ -213,7 +201,7 @@ how to spend their time.
 
 ## Step 4: Deliver the call
 
-Lead with the versioned verdict from the script (Step 1 above), then your own read on top of it.
+Lead with the versioned **SESSION** verdict from the script, then report the structure status.
 They may only read the first line.
 
 ### Know the limit of what you are doing — measured, not guessed, at the ACTUAL call time
@@ -222,16 +210,17 @@ Earlier versions of this doc measured "how often a call misses a rideable mornin
 0–60-minute-ahead aggregate. That was never the automation's real question — the automation runs
 at a fixed 05:45, and how far ahead of gate-open that sits varies by season (§4.5). The current
 numbers instead score the rule at exactly 05:45, split by that actual lead time
-(`research/katabatic-prediction.md` §7, 324 archived mornings):
+(`research/katabatic-prediction.md` §7, 325 archived mornings):
 
 | Lead time from 05:45 to gate-open | Season | Missed rideable mornings |
 |---|---|---|
-| 15 min (6:00 gate, May–Sep) | in-season | **6.7%** (n=171, 45 rideable) |
-| 75 min (7:00 gate, Mar/Apr/Oct) | in-season | **41.7%** (n=91, 36 rideable) |
-| 135 min (8:00 gate, Nov–Feb) | out-of-season | 38.9% (n=62, 18 rideable) |
+| 15 min (6:00 gate, May–Sep) | in-season | **4.4%** (n=172, 45 rideable) |
+| 75 min (7:00 gate, Mar/Apr/Oct) | in-season | **36.1%** (n=91, 36 rideable) |
+| 135 min (8:00 gate, Nov–Feb) | out-of-season | 33.3% (n=62, 18 rideable) |
 
-Overall at 05:45: missed 25.3% (25/99 rideable mornings), false-alarm 28.9% (65/225 flat
-mornings), base rate 30.6%.
+Overall at 05:45, v5's `GO + MARGINAL` opportunity layer misses 21.2% (21/99 rideable mornings).
+Strict `GO` covered 52 rideable mornings with 19 false alarms (73.2% precision). `MARGINAL`
+occurred 102 times and later converted to rideable on 26; it means re-check, not drive.
 
 **This is a strong measurement and a weak forecast, and the shape is now visible instead of
 assumed.** May–Sep is the easy case — 05:45 is only 15 minutes before the gate, so the call is
@@ -239,8 +228,8 @@ nearly a live read and rarely misses. Mar/Apr/Oct is the hard case — 75 minute
 gate is a real projection, and it misses four times more often. Let that govern how the call is
 worded:
 
-- **May–Sep (6:00 gate)** → make a real call. It is well supported (94% hit rate on rideable
-  mornings).
+- **May–Sep (6:00 gate)** → make a real call. The opportunity layer retains 96% of rideable
+  mornings.
 - **Mar/Apr/Oct (7:00 gate) or Nov–Feb (8:00 gate)** → **do not talk them out of going.** Say
   plainly the call is less certain at this lead time, give the current readings, and recommend
   re-checking near gate-open. A miss here costs a real session while a wasted look costs five
@@ -251,15 +240,15 @@ certainty here is the single most costly failure mode this skill has.
 
 Structure that works well:
 
-1. **Verdict up front** — go / don't go / go now and hurry / too early to tell, in plain
-   language.
-2. **Current numbers** — a small table of the most recent readings (time, avg, gust, direction).
+1. **Session verdict up front** — GO / MARGINAL (re-check, do not leave) / NO_GO.
+2. **Katabatic structure** — present, possible, absent, or unknown; never a substitute verdict.
+3. **Current numbers** — a small table of the most recent readings (time, avg, gust, direction).
    Concrete numbers let them sanity-check you.
-3. **Why you think it's real (or not)** — walk the signals that support the call. This is where
+4. **Why you think it's real (or not)** — walk the signals that support the call. This is where
    direction lock, build shape, humidity, and neighbor contrast go.
-4. **The window assessment** — what happens across their specific session block, and when you
+5. **The window assessment** — what happens across their specific session block, and when you
    expect it to fade.
-5. **Actionable advice** — anything time-sensitive. If the back half of their window is at risk,
+6. **Actionable advice** — anything time-sensitive. If the back half of their window is at risk,
    tell them not to dawdle at the truck.
 
 Keep it tight. Tables beat paragraphs for numbers. Skip preamble entirely — no "I checked the
@@ -267,7 +256,7 @@ meter and here's what I found", just lead with the answer.
 
 ## Calibration examples
 
-Two real runs. **Read both** — they are near-identical at call time and resolve in opposite
+Three real runs. **Read all three** — the first two are near-identical at call time and resolve in opposite
 directions, which is the point.
 
 ### Case 1 — marginal call that paid off
@@ -310,11 +299,18 @@ the call went out, while the trend word still read `HOLDING` because -0.6 mph si
 ±3.0 band. Case 1 was genuinely holding at 14–16; Case 2 was two-thirds of the way through its
 decay and looked the same on every other axis.
 
-The lesson is not "be more pessimistic." It is that on a marginal morning the `over-N` trajectory
-is the only signal that discriminates, so read it deliberately rather than leaning on the four
-structural signals that agree on almost every real event. The right Case 2 call was still *go* —
-but worded as "the tail of a fading event, be at the gate on the minute, don't expect the back
-half," not "solid 6:00–6:45."
+The lesson is not "be more pessimistic." It is that structural evidence answers a different
+question from rideability. Under v5 this setup is never promoted to GO by direction, humidity,
+or neighbors; it remains MARGINAL unless the amplitude state earns a threshold-specific call.
+
+### Case 3 — real structure, session NO_GO (2026-08-19)
+
+At 05:45 the direction, drying air, and quiet neighbors described a real local drainage pulse.
+But no reading in the prior 30, 60, or 120 minutes reached 15 mph, and the last three readings
+fell 14.9 → 14.3 → 10.9 mph. The 6am hour then averaged 6.0 mph.
+
+The correct dual call is `SESSION NO_GO / KATABATIC STRUCTURE PRESENT`: useful physical
+information without sending the rider to a sub-threshold session.
 
 ## Notes on the data source
 

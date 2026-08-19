@@ -205,7 +205,7 @@ async function main() {
   // 05:45 is the actual automated call time (the user's local automation runs the live skill
   // then, every riding morning) — not 06:30, which was a disconnected number nothing else in the
   // pipeline calls at.
-  await run('score-backtest.mjs', ['--call-time', '05:45', '--rule-version', 'call-rule-v1']);
+  await run('score-backtest.mjs', ['--call-time', '05:45', '--rule-version', 'call-rule-v5']);
   await run('score-backtest.mjs', ['--call-time', '05:45', '--rule-version', 'call-rule-v2']);
 
   console.log('\n## RECONCILING LIVE PREDICTION LOG\n');
