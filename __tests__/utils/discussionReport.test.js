@@ -28,6 +28,9 @@ function fixture() {
       successChancePercent: 65,
       label: null,
       forecastResult: null,
+      observedMorningMaxSpeedMph: null,
+      observedMorningMaxGustMph: null,
+      observedMorningSustainedMinutes: null,
       avgForecastWindMph: 10.2,
       avgLidM: 80,
       predictionMode: 'forward',
@@ -40,6 +43,9 @@ function fixture() {
       successChancePercent: 10,
       label: true,
       forecastResult: { label: 'MISSED SESSION', tone: 'danger' },
+      observedMorningMaxSpeedMph: 18.4,
+      observedMorningMaxGustMph: 23.1,
+      observedMorningSustainedMinutes: 35,
       avgForecastWindMph: 3.1,
       avgLidM: 450,
       predictionMode: 'retrospective',
@@ -51,16 +57,23 @@ function fixture() {
 }
 
 describe('GitHub Discussion report', () => {
-  it('renders provenance, warnings, compact fields, and honest result labels', () => {
+  it('renders provenance, warnings, and objective observed wind', () => {
     const report = renderDiscussionReport(fixture());
 
     expect(report).toContain('Research display only — not a go/no-go recommendation');
     expect(report).toContain('UNSAFE: research \\| display only.');
     expect(report).toContain('2026-08-18<br><sub>forward</sub>');
     expect(report).toContain('2026-08-10<br><sub>retrospective</sub>');
-    expect(report).toContain('Awaiting outcome');
-    expect(report).toContain('MISSED SESSION');
-    expect(report).toContain(`at least ${REPORT_THRESHOLD_MPH} mph for 30 continuous minutes`);
+    expect(report).toContain(`| Date / sample | Call | Chance | Max wind | Max gust | Minutes ≥${REPORT_THRESHOLD_MPH} mph | HRRR wind | Lid |`);
+    expect(report).toContain('18.4 mph');
+    expect(report).toContain('23.1 mph');
+    expect(report).toContain('35 min');
+    expect(report).not.toContain('| Outcome | Result |');
+    expect(report).not.toContain('MISSED SESSION');
+    const forecastOnlyRow = report.split('\n').find((line) => line.startsWith('| 2026-08-18'));
+    expect(forecastOnlyRow).toContain('— | — | —');
+    expect(report).toContain('midnight through sunrise +3 hours');
+    expect(report).toContain('not calm wind');
     expect(report).toContain('wind-lid-logistic-v1');
   });
 

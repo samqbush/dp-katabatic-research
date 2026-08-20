@@ -105,7 +105,7 @@ export function renderDashboardHtml(instanceId) {
     </div>
     <div class="controls">
       <div class="control">
-        <label for="threshold">Rideable threshold</label>
+        <label for="threshold">Wind threshold</label>
         <div class="threshold-wrap">
           <input id="threshold" type="range" min="5" max="30" step="1" value="15">
           <output id="threshold-value" for="threshold">15 mph</output>
@@ -131,11 +131,6 @@ export function renderDashboardHtml(instanceId) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
   const value = (v, suffix = "") => v === null || v === undefined ? "—" : v + suffix;
-  const label = (v) => v === true
-    ? '<span class="pill yes">Rideable</span>'
-    : v === false
-      ? '<span class="pill no">Not rideable</span>'
-      : '<span class="pill unknown">Unscored</span>';
   const call = (v) => v === "PACK"
     ? '<span class="pill pack">PACK</span>'
     : v === "SLEEP IN"
@@ -153,11 +148,6 @@ export function renderDashboardHtml(instanceId) {
     : v === "backfill"
       ? '<span class="pill neutral">Backfill</span>' +
           (predictionMode ? '<div class="muted">probability ' + esc(predictionMode) + '</div>' : "")
-      : "—";
-  const result = (v, forecastCall, outcome) => v
-    ? '<span class="pill ' + esc(v.tone) + '">' + esc(v.label) + '</span>'
-    : forecastCall && outcome === null
-      ? '<span class="pill unknown">Awaiting outcome</span>'
       : "—";
   const chance = (percent, raw) => percent === null || percent === undefined
     ? "—"
@@ -187,17 +177,17 @@ export function renderDashboardHtml(instanceId) {
         <td>\${phase(day.forecastPhase, day.predictionMode)}</td>
         <td title="\${esc(day.forecastCallReason ?? "No complete forecast")}">\${call(day.forecastCall)}</td>
         <td>\${chance(day.successChancePercent, day.successChanceRaw)}</td>
-        <td>\${label(day.label)}</td>
-        <td>\${result(day.forecastResult, day.forecastCall, day.label)}</td>
+        <td>\${value(day.observedMorningMaxSpeedMph, " mph")}</td>
+        <td>\${value(day.observedMorningMaxGustMph, " mph")}</td>
+        <td>\${value(day.observedMorningSustainedMinutes, " min")}</td>
         <td>\${value(day.avgForecastWindMph, " mph")}</td>
         <td>\${value(day.avgLidM, " m")}</td>
-        <td>\${value(day.sustainedMinutes, " min")}</td>
       </tr>\`).join("");
 
     content.innerHTML = \`
       <section class="notice">
         <strong>Research display only — not a go/no-go recommendation.</strong>
-        GitHub Actions captures raw HRRR inputs around 7:30 p.m. and the observed outcome the next
+        GitHub Actions captures raw HRRR inputs around 7:30 p.m. and Soda observations the next
         afternoon. It does not run <code>/dp-katabatic-check</code> at 5:00/5:30 a.m. and does not
         send an alarm. The call shown below is recomputed from the frozen rule that failed its
         historical safety test. Calls and chances are read from immutable, versioned prediction
@@ -222,7 +212,7 @@ export function renderDashboardHtml(instanceId) {
           <h2>Recent Soda mornings</h2>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Date</th><th>Sample</th><th>Experimental call</th><th>Chance</th><th>Outcome</th><th>Result</th><th>Avg HRRR wind</th><th>Avg lid</th><th>Sustained</th></tr></thead>
+              <thead><tr><th>Date</th><th>Sample</th><th>Experimental call</th><th>Chance</th><th>Max wind</th><th>Max gust</th><th>Minutes ≥\${esc(data.parameters.thresholdMph)} mph</th><th>Avg HRRR wind</th><th>Avg lid</th></tr></thead>
               <tbody>\${rows || '<tr><td colspan="9">No archived mornings.</td></tr>'}</tbody>
             </table>
           </div>
@@ -231,6 +221,9 @@ export function renderDashboardHtml(instanceId) {
             the exact 00Z run available the evening before. “Chance” means
             \${esc(data.research.probabilityModel?.target ?? "the current rideable outcome")};
             it is not yet a calibrated product probability.
+            Observed max wind and gust cover Colorado-local midnight through sunrise +3 hours and
+            do not change with the slider. Minutes at or above the selected threshold is the longest
+            continuous run; data gaps break a run. An em dash means unavailable or too coarse, not calm.
             \${fmt.format(s.storedPredictionDays)} forecast days have stored predictions;
             \${fmt.format(s.forecastsWithoutPrediction)} do not. \${fmt.format(s.matchedPairs)}
             total matched pairs; \${fmt.format(s.outcomesWithoutForecast)} usable outcomes lack

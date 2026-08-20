@@ -147,7 +147,7 @@ await joinSession({
                 {
                     name: "set_threshold",
                     description:
-                        "Recompute rideable outcomes with a sustained-wind threshold from 5 to 30 mph.",
+                        "Recompute threshold-duration observations and research outcome metrics from 5 to 30 mph.",
                     inputSchema: {
                         type: "object",
                         additionalProperties: false,

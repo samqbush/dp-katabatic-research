@@ -49,6 +49,16 @@ export const MAX_MINUTES_PAST_SUNRISE = 180;
  */
 export const MAX_LABELABLE_STEP_MIN = 30;
 
+function physicalMorningBounds(date) {
+  const sunrise = calcSunrise(date, SUNRISE_COORDS.lat, SUNRISE_COORDS.lng);
+  return {
+    startTs: Math.floor(zonedTimeFrom(date, 0, 0, 0).getTime() / 1000),
+    endTs: sunrise
+      ? Math.floor(sunrise.getTime() / 1000) + MAX_MINUTES_PAST_SUNRISE * 60
+      : Math.floor(zonedTimeFrom(date, 11, 0, 0).getTime() / 1000),
+  };
+}
+
 /**
  * How many minutes of coverage a single archived point represents.
  *
@@ -99,6 +109,52 @@ function longestSustainedRun(points, threshold, stepMin) {
   return best;
 }
 
+function finiteMax(points, field) {
+  const values = points
+    .map((point) => point[field])
+    .filter((value) => value !== null && value !== undefined && value !== '')
+    .map(Number)
+    .filter(Number.isFinite);
+  return values.length ? Math.max(...values) : null;
+}
+
+/**
+ * Summarize what the wind actually did during the full physical morning, independent of park
+ * access. The canonical rideable label below remains gate-conditioned.
+ */
+export function summarizeMorningWind(
+  dayRecord,
+  { threshold = DEFAULT_THRESHOLD_MPH } = {},
+) {
+  const date = parseArchiveDate(dayRecord.date);
+  const { startTs, endTs } = physicalMorningBounds(date);
+  const unknown = {
+    maxSpeedMph: null,
+    maxGustMph: null,
+    sustainedMinutes: null,
+    windowStartTs: startTs,
+    windowEndTs: endTs,
+  };
+
+  if (dayRecord.status !== 'ok' || !dayRecord.points?.length) return unknown;
+
+  const step = cycleMinutes(dayRecord.cycle_type);
+  if (step > MAX_LABELABLE_STEP_MIN) return unknown;
+
+  const points = dayRecord.points.filter((point) => point.ts >= startTs && point.ts <= endTs);
+  const maxSpeedMph = finiteMax(points, 'speed');
+  if (maxSpeedMph === null) return unknown;
+
+  const best = longestSustainedRun(points, threshold, step);
+  return {
+    maxSpeedMph,
+    maxGustMph: finiteMax(points, 'gust'),
+    sustainedMinutes: best.minutes,
+    windowStartTs: startTs,
+    windowEndTs: endTs,
+  };
+}
+
 /**
  * Score one archived station-day.
  *
@@ -114,10 +170,7 @@ export function labelDay(dayRecord, { threshold = DEFAULT_THRESHOLD_MPH, minSust
   // The morning window is bounded at both ends: the gate at the front (access), sunrise+3h at
   // the back (physics). See MAX_MINUTES_PAST_SUNRISE — without the back edge this silently
   // scores afternoon thermals.
-  const sunrise = calcSunrise(date, SUNRISE_COORDS.lat, SUNRISE_COORDS.lng);
-  const windowEndTs = sunrise
-    ? Math.floor(sunrise.getTime() / 1000) + MAX_MINUTES_PAST_SUNRISE * 60
-    : Math.floor(zonedTimeFrom(date, 11, 0, 0).getTime() / 1000);
+  const { endTs: windowEndTs } = physicalMorningBounds(date);
 
   if (dayRecord.status !== 'ok' || !dayRecord.points?.length) {
     return {

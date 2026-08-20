@@ -1,6 +1,6 @@
 import { query } from "./db.mjs";
 import { readDays, isoDay } from "./archive-store.mjs";
-import { labelDay, parseArchiveDate } from "./label.mjs";
+import { labelDay, parseArchiveDate, summarizeMorningWind } from "./label.mjs";
 import {
     experimentalCallResult,
     FORWARD_HOLDOUT_START,
@@ -15,8 +15,12 @@ function round(value, digits = 1) {
 }
 
 function maxOf(points, field) {
-    if (!points.length) return null;
-    return Math.max(...points.map((point) => Number(point[field])));
+    const values = points
+        .map((point) => point[field])
+        .filter((value) => value !== null && value !== undefined && value !== "")
+        .map(Number)
+        .filter(Number.isFinite);
+    return values.length ? Math.max(...values) : null;
 }
 
 function healthFor(station) {
@@ -185,6 +189,7 @@ function summarizeMorning(record, label, forecast) {
         start === null || end === null
             ? []
             : record.points.filter((point) => point.ts >= start && point.ts <= end);
+    const observedMorning = summarizeMorningWind(record, { threshold: label.threshold });
 
     return {
         date: record.date,
@@ -197,6 +202,9 @@ function summarizeMorning(record, label, forecast) {
         gateOpenHour: label.gateOpenHour,
         maxSpeedMph: round(maxOf(morningPoints, "speed")),
         maxGustMph: round(maxOf(morningPoints, "gust")),
+        observedMorningMaxSpeedMph: round(observedMorning.maxSpeedMph),
+        observedMorningMaxGustMph: round(observedMorning.maxGustMph),
+        observedMorningSustainedMinutes: observedMorning.sustainedMinutes,
         minLidM: forecast?.minLidM ?? null,
         avgLidM: forecast?.avgLidM ?? null,
         avgForecastWindMph: forecast?.avgWindMph ?? null,
@@ -228,6 +236,9 @@ function summarizeForecastOnly(forecast) {
         gateOpenHour: null,
         maxSpeedMph: null,
         maxGustMph: null,
+        observedMorningMaxSpeedMph: null,
+        observedMorningMaxGustMph: null,
+        observedMorningSustainedMinutes: null,
         minLidM: forecast.minLidM,
         avgLidM: forecast.avgLidM,
         avgForecastWindMph: forecast.avgWindMph,

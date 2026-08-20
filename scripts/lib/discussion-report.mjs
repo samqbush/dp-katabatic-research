@@ -46,12 +46,6 @@ function value(value, suffix = '') {
   return value === null || value === undefined ? '—' : `${value}${suffix}`;
 }
 
-function outcome(day) {
-  if (day.label === true) return 'Rideable';
-  if (day.label === false) return 'Not rideable';
-  return day.hasForecast ? 'Awaiting outcome' : 'Unscored';
-}
-
 function sample(day) {
   if (day.predictionMode === 'forward') return 'forward';
   if (day.predictionMode === 'retrospective') return 'retrospective';
@@ -93,8 +87,9 @@ export function renderDiscussionReport(data) {
     `${cell(day.date)}<br><sub>${cell(sample(day))}</sub>`,
     cell(day.forecastCall ?? 'No call'),
     cell(day.successChancePercent === null ? null : `${day.successChancePercent}%`),
-    cell(outcome(day)),
-    cell(day.forecastResult?.label),
+    cell(value(day.observedMorningMaxSpeedMph, ' mph')),
+    cell(value(day.observedMorningMaxGustMph, ' mph')),
+    cell(value(day.observedMorningSustainedMinutes, ' min')),
     cell(value(day.avgForecastWindMph, ' mph')),
     cell(value(day.avgLidM, ' m')),
   ].join(' | '));
@@ -121,18 +116,18 @@ export function renderDiscussionReport(data) {
     `Average HRRR wind: **${cell(value(latestForecast.avgForecastWindMph, ' mph'))}** · Average lid: **${cell(value(latestForecast.avgLidM, ' m'))}** · Sample: **${cell(sample(latestForecast))}**`,
     '',
     stale
-      ? `> [!WARNING]\n> Soda archive is stale: latest outcome day is ${cell(soda?.latestDate)} (${cell(soda?.lagDays)} days behind).`
-      : `Soda outcomes through **${cell(soda?.latestDate)}**.`,
+      ? `> [!WARNING]\n> Soda archive is stale: latest observation day is ${cell(soda?.latestDate)} (${cell(soda?.lagDays)} days behind).`
+      : `Soda observations through **${cell(soda?.latestDate)}**.`,
     '',
     `Data last changed **${sourceUpdatedAt ? DENVER_TIME.format(sourceUpdatedAt) : 'unknown'}** (America/Denver).`,
     '',
     '## Rolling 14-day record',
     '',
-    '| Date / sample | Call | Chance | Outcome | Result | HRRR wind | Lid |',
-    '|---|---|---:|---|---|---:|---:|',
+    `| Date / sample | Call | Chance | Max wind | Max gust | Minutes ≥${REPORT_THRESHOLD_MPH} mph | HRRR wind | Lid |`,
+    '|---|---|---:|---:|---:|---:|---:|---:|',
     ...rows.map((row) => `| ${row} |`),
     '',
-    `<sub>“forward” means stored before the outcome; “retrospective” means backfilled after the fact. Forward holdout began ${FORWARD_HOLDOUT_START}. Outcome means at least ${REPORT_THRESHOLD_MPH} mph for 30 continuous minutes in the accessible morning window. Chance is an unvalidated, rounded research estimate—not a calibrated product probability.</sub>`,
+    `<sub>Observed wind covers Colorado-local midnight through sunrise +3 hours. “Minutes ≥${REPORT_THRESHOLD_MPH} mph” is the longest continuous run; data gaps break a run. An em dash means the observation is unavailable or too coarse, not calm wind. “forward” means stored before the observed morning; “retrospective” means backfilled after it. Forward holdout began ${FORWARD_HOLDOUT_START}. Chance is an unvalidated, rounded research estimate—not a calibrated product probability.</sub>`,
     '',
     `Model: \`${cell(model?.modelVersion)}\` · trained through ${cell(model?.trainedThrough)} · ${cell(model?.trainingPairs)} training mornings.`,
     '',
