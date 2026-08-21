@@ -2273,3 +2273,103 @@ Design points worth keeping:
 written but **inert on a research branch** — GitHub fires `schedule` and `workflow_dispatch` only
 for workflows on a repository's default branch. Until the research repo exists, the collector must
 be run by hand, and **every day it is not run is a morning that can never be recovered.**
+
+---
+
+## 15. The post-sunrise second pulse (2026-08-21) — exploratory
+
+> ⚠️ **EXPLORATORY, NOT PREREGISTERED.** The windows below were chosen *after* observing
+> 2026-08-21, which is exactly the pattern §9 warns about. Nothing here has been through the §7.1a
+> promotion bar and nothing here changes a rule version. It is recorded because it closes a real
+> gap — the archive had no characterisation of what happens *after* the drainage dies — and
+> because the headline number is a clean zero that is worth knowing before someone chases it.
+
+### 15.1 The observation
+
+2026-08-21 at Soda ran as **two separate pulses**, not one event with a lull:
+
+| Window | Behaviour |
+|---|---|
+| 00:00–05:30 | Drainage builds 7.3 → 14.0 avg, tight W/WNW. Peaks **16.2** at 05:30 |
+| 05:55–06:20 | Collapse: 12.3 → **2.1**. Direction scatters SW/SSE/S/NNW. RH rises 36% → 43% |
+| 06:25–08:15 | **Second pulse**: rebuilds to a tight 273–289°, peaks **15.9** at 07:30 (gust 23.9). RH falls 43% → 30% |
+| 08:20–08:45 | Dies: 9.2 → 2.9. Direction swings ESE |
+| 09:00+ | ESE upslope 5–6 mph for the rest of the day |
+
+Sunrise 06:17. Gate 06:00.
+
+**Total time ≥15 mph across the whole morning: 20 minutes. Longest continuous run: 5 minutes.**
+Against `labelDay`'s 30-continuous-minute bar this is **not rideable**, and the live 05:47 call of
+`SESSION MARGINAL / STRUCTURE POSSIBLE` was correct — not correct-by-luck on timing, but correct
+because the morning never produced a session at any hour.
+
+### 15.2 The measurement — does a 05:45 check miss late sessions?
+
+The decision-relevant question is whether checking once at 05:45 systematically misses a session
+that only shows up after 07:00. Measured over **111 May–Sep mornings** at Soda with 5-min
+resolution (`cycle_type = '5min'`, >200 points/day), asking how often the first post-gate hour
+busts (<15 min sustained) but 07:00–09:00 then delivers a **30-minute continuous run**:
+
+| Threshold | Gate hour 06:00–07:00 delivers 30 min | Gate hour busts **but** 07:00–09:00 delivers 30 min |
+|---|---|---|
+| **15 mph** | 21 (18.9%) | **0 (0.0%)** |
+| 12 mph | 40 (36.0%) | 1 (0.9%) — 2026-08-14 |
+
+Adding 2026-08-21 (gate hour flat at 12, late window 30 min) makes the 12 mph figure **2 of 112,
+~1.8%**. At 15 mph it remains **zero in 112 mornings**.
+
+A companion cut asked the same thing from the other side — of the 86 mornings whose 30-min average
+ending 05:45 was below 15, only **2 (2.3%)** later produced a 30-min run ≥15 in 07:00–09:00.
+
+### 15.3 Interpretation
+
+The second pulse is a **morning-transition artefact**, not the drainage restarting. The inversion
+is gone by 06:30; what reaches the surface is the residual westerly gradient briefly mixing down as
+the boundary layer grows, and it is terminated by the daytime upslope (anabatic) regime roughly two
+hours past sunrise. The RH trace is the supporting evidence: falling 43% → 30% *through* the pulse
+(dry air brought down from aloft), then rising again as upslope moist air arrived.
+
+This is consistent with §4.5's "+57 min past sunrise" window close rather than a challenge to it —
+the *sustained rideable* window does close on schedule; the second pulse is a distinct,
+sub-threshold phenomenon that follows it.
+
+Two things worth flagging for anyone reading a live meter mid-morning:
+
+- **The usual direction-wander early warning does not apply.** On 2026-08-21 the speed collapsed
+  first (12.1 → 9.2 at 08:20, direction still locked 269–285°) and the ESE swing did not arrive
+  until 08:35 — *trailing* the collapse by ~15 min. Reading direction as the leading indicator, as
+  §Step 2 of the skill does for the overnight event, would have been late here.
+- **It looks textbook while it is happening.** Tight direction lock, monotonic build, falling
+  humidity, calm neighbours — the same four signals §7's Case 1/Case 2 pair already showed cannot
+  separate a rideable morning from a bust. It is more evidence that structural signals answer a
+  different question from amplitude.
+
+### 15.4 What this does and does not change
+
+**Does not change:** any rule version, any threshold, any labelling. No promotion is claimed.
+
+**Does change:** the live skill (`.github/skills/dp-katabatic-check/SKILL.md`) now carries a
+"post-sunrise second pulse" section instructing the agent never to advise waiting for the late
+window at 15 mph, and to treat it as a ~2%-of-mornings possibility at 12 mph only for a rider
+already at the lake.
+
+**Caveats.** 111 mornings is a modest sample for a ~1% pattern, the windows are post-hoc, and the
+analysis is May–Sep only (the 6:00-gate season). The 15 mph zero is a genuine zero *in this
+archive* and should be read as "very rare", not "impossible". A preregistered version would fix the
+window definitions in advance and test on mornings collected after 2026-08-21.
+
+### 15.5 Tooling defect found while doing this
+
+The live skill's `--since HH:MM` always stamped the *current* station day, so any value later than
+the current clock produced a start **after** the end. Ecowitt answers that with `code: 0` and an
+empty payload, which the script could not distinguish from a dark meter — so `--since 20:00` run at
+05:57 reported *"station is likely offline"* and wrote a `NO_DATA` row to `research/prediction-log.csv`
+while the meter was fine and averaging 12.3 mph.
+
+This is the §4.2 failure class (absence recorded as fact) reappearing in the read path rather than
+the write path. Fixed 2026-08-21: a future-dated `--since` now resolves to the previous day via
+`zonedTime(day - 1)` (DST- and month-boundary-safe, per §9.1), malformed values throw instead of
+silently defaulting to midnight, hourly buckets are keyed on station day so a cross-midnight window
+sorts correctly, and the NO DATA message prints the window it actually queried. Regression tests
+live in `__tests__/utils/katabaticCheckSince.test.js`; the spurious row was retracted via a new
+`removeRows()` in `prediction-log-store.mjs`, which remains the log's only writer.

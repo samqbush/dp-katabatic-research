@@ -14,13 +14,15 @@
  * Flags:
  *   --station <name>    Station to analyze (default "DP Soda Lakes"), case-insensitive substring match
  *   --threshold <mph>   Sustained speed the user cares about (default 15)
- *   --since <HH:MM>     Start of the overnight window to pull (default 00:00 local)
+ *   --since <HH:MM>     Start of the overnight window to pull (default 00:00 local). A time later
+ *                       than the current station time is read as *last night*, so `--since 20:00`
+ *                       at 5am pulls the full overnight build rather than an empty window.
  *   --no-log            Do not persist this diagnostic run (real checks log by default)
  */
 
 import axios from 'axios';
 import { config } from 'dotenv';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { readFile } from 'fs/promises';
 import { buildLogRow } from '../../../../scripts/lib/prediction-log.mjs';
@@ -32,7 +34,6 @@ import { FEATURE_VERSION_V5, RULE_VERSION_V5 } from '../../../../scripts/lib/ver
 import {
   zonedTime,
   zonedParts,
-  zonedHour,
   todayAtStation,
   fmtStationDateTime,
   fmtStationTime,
@@ -103,7 +104,35 @@ function parseArgs(argv) {
   return args;
 }
 
-// Ecowitt wants STATION wall-clock time, and every hour printed below is a Colorado hour.
+/**
+ * Resolve `--since HH:MM` to an absolute instant, at the station.
+ *
+ * A time later than the station's current clock means *last night* — `--since 20:00` run at 5am
+ * is asking for the overnight build, not for 8pm tonight. The original code always stamped the
+ * current station day, so any such value produced a start *after* the end; Ecowitt answered that
+ * with a successful-but-empty payload and the script reported the meter offline. That is the one
+ * failure mode this project refuses to tolerate (absence is unknown, never calm) and it wrote a
+ * bogus NO_DATA row into the prediction log on 2026-08-21.
+ *
+ * Day rollback goes through `zonedTime` with `day - 1` rather than subtracting 24h, so it stays
+ * correct across DST changeovers and month boundaries (Date.UTC normalises day 0).
+ *
+ * Throws rather than exiting so it is testable; `main`'s catch turns it into a clean CLI error.
+ */
+export function resolveSince(since, now) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(since).trim());
+  if (!m) throw new Error(`--since "${since}" is not HH:MM (e.g. --since 20:00).`);
+  const [h, min] = [Number(m[1]), Number(m[2])];
+  if (h > 23 || min > 59) throw new Error(`--since "${since}" is not a real clock time (00:00–23:59).`);
+  const p = zonedParts(now);
+  let start = zonedTime(p.year, p.month, p.day, h, min, 0);
+  // `>=`, not `>`: an exactly-equal start is a zero-width window, which comes back empty and
+  // relands on the same false "station offline" report this function exists to prevent.
+  if (start >= now) start = zonedTime(p.year, p.month, p.day - 1, h, min, 0);
+  return start;
+}
+
+
 // Both must be pinned to the station zone, not the laptop's — see scripts/lib/zone.mjs and
 // research/katabatic-prediction.md §9.1. Running this from another timezone used to shift every
 // reported hour, the ideal-direction test and the logged call time.
@@ -206,14 +235,24 @@ async function getSunrise() {
 function hourlyRollup(points) {
   const buckets = new Map();
   for (const p of points) {
-    const h = zonedHour(p.date);
-    if (!buckets.has(h)) buckets.set(h, []);
-    buckets.get(h).push(p);
+    const q = zonedParts(p.date);
+    // Bucket on the station calendar day as well as the hour. A `--since` that reaches back into
+    // last night must not fold 22:00 yesterday into 22:00 today, and sorting on the bare hour
+    // would print last night's hours *after* this morning's.
+    const key = `${q.year}-${q.month}-${q.day}-${q.hour}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, { hour: q.hour, month: q.month, day: q.day, sortTs: p.ts, pts: [] });
+    }
+    const b = buckets.get(key);
+    if (p.ts < b.sortTs) b.sortTs = p.ts;
+    b.pts.push(p);
   }
-  return [...buckets.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([hour, pts]) => ({
+  return [...buckets.values()]
+    .sort((a, b) => a.sortTs - b.sortTs)
+    .map(({ hour, month, day, pts }) => ({
       hour,
+      month,
+      day,
       avg: mean(pts.map((p) => p.speed)),
       peakGust: Math.max(...pts.map((p) => p.gust)),
       dir: circularMean(pts.map((p) => p.dir)),
@@ -263,10 +302,7 @@ async function main() {
   }
 
   const now = new Date();
-  const [sinceH, sinceM] = args.since.split(':').map(Number);
-  // `--since 03:00` means 3am in Colorado, on Colorado's current day, wherever the laptop is.
-  const stationNow = zonedParts(now);
-  const start = zonedTime(stationNow.year, stationNow.month, stationNow.day, sinceH || 0, sinceM || 0, 0);
+  const start = resolveSince(args.since, now);
 
   const devices = await getDevices();
   const dpDevices = devices.filter((d) => /^DP /i.test(d.name));
@@ -301,7 +337,11 @@ async function main() {
           '   normally over, so these mornings are usually not sessionable regardless.'
       );
     } else {
-      console.log('\n❌ NO DATA returned for today. Station is likely offline — do not guess at conditions.');
+      console.log(
+        `\n❌ NO DATA returned for ${fmtStationDateTime(start)} → ${fmtStationDateTime(now)} (Colorado time).\n` +
+          '   Station is likely offline — do not guess at conditions. Check the window above first:\n' +
+          '   an empty result for a valid window means the meter is dark, never that it is calm.'
+      );
     }
     if (args.log) {
       const noDataCall = {
@@ -344,10 +384,14 @@ async function main() {
 
   /* --- overnight shape: a real event builds, it doesn't just appear --- */
   console.log(`\n## HOURLY TREND (avg mph / peak gust / mean dir)`);
-  for (const h of hourlyRollup(points)) {
-    const label = `${String(h.hour).padStart(2, '0')}:00`;
+  const hours = hourlyRollup(points);
+  // When the window reaches back into last night, bare "20:00" is ambiguous — date-stamp it.
+  const spansDays = new Set(hours.map((h) => `${h.month}-${h.day}`)).size > 1;
+  for (const h of hours) {
+    const hh = `${String(h.hour).padStart(2, '0')}:00`;
+    const label = spansDays ? `${h.month + 1}/${h.day} ${hh}` : hh;
     console.log(
-      `${label}  avg ${mph(h.avg).padStart(5)}  gust ${mph(h.peakGust).padStart(5)}  ${dirStr(h.dir).padEnd(10)}` +
+      `${label.padEnd(spansDays ? 11 : 5)}  avg ${mph(h.avg).padStart(5)}  gust ${mph(h.peakGust).padStart(5)}  ${dirStr(h.dir).padEnd(10)}` +
         `  ${h.temp !== null ? `${h.temp.toFixed(0)}°F` : ''}  ${h.rh !== null ? `RH ${h.rh.toFixed(0)}%` : ''}`
     );
   }
@@ -526,7 +570,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`❌ Katabatic check failed: ${err.message}`);
-  process.exit(1);
-});
+// Only run as a CLI. Guarding the entry point lets the pure helpers above be imported by tests
+// without firing Ecowitt requests or calling process.exit.
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  main().catch((err) => {
+    console.error(`❌ Katabatic check failed: ${err.message}`);
+    process.exit(1);
+  });
+}

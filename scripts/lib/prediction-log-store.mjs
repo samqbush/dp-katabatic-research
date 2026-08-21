@@ -114,4 +114,31 @@ export async function upsertRow(path, row) {
   return upsertRows(path, [row]);
 }
 
+/**
+ * Remove rows by `rowKey`, atomically and under the same lock as `upsertRows`.
+ *
+ * Deliberately narrow: this exists to retract a row that never described a real observation —
+ * e.g. the 2026-08-21 05:57 NO_DATA row, which was produced by a `--since` bug that requested a
+ * window starting 14 hours in the future and read Ecowitt's empty reply as a dark meter. Leaving
+ * it in place would have overstated station downtime in the reliability record.
+ *
+ * This must never be used to drop an inconvenient *real* call. A logged call is evidence; only a
+ * row that was never a genuine observation of the meter is eligible.
+ *
+ * @returns { removed, total } counts.
+ */
+export async function removeRows(path, keys) {
+  const lockPath = `${path}.lock`;
+  await acquireLock(lockPath);
+  try {
+    const existing = await readAllRows(path);
+    const drop = new Set(keys);
+    const kept = existing.filter((r) => !drop.has(rowKey(r)));
+    await writeAllAtomic(path, kept);
+    return { removed: existing.length - kept.length, total: kept.length };
+  } finally {
+    await releaseLock(lockPath);
+  }
+}
+
 export { LOG_COLUMNS };

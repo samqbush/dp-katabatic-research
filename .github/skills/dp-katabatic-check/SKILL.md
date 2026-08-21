@@ -51,7 +51,9 @@ node .github/skills/dp-katabatic-check/scripts/katabatic-check.mjs
 Useful flags:
 - `--station "DP Standley West"` — a different meter (default is `DP Soda Lakes`)
 - `--threshold 12` — the sustained speed the user actually needs (default 15)
-- `--since 20:00` — pull further back, e.g. to see the full overnight build
+- `--since 20:00` — pull further back, e.g. to see the full overnight build. A time later than
+  the current station clock is read as **last night**, so this works before dawn. (Prior to
+  2026-08-21 it silently requested a future window and the script reported the meter offline.)
 - Real calls log automatically to `research/prediction-log.csv`. Distinct checks keep their
   second-resolution call time; an exact retry replaces the same row. Only the outcome columns
   (label, sustained_minutes, ...) remain blank until `scripts/reconcile-live-log.mjs` fills them
@@ -194,6 +196,40 @@ direction starting to wander will not.
 Note the interaction — in June sunrise is ~5:32 and the gate opens at 6:00, so the event may
 be fading as they arrive. In September sunrise is ~6:43 against the same 6:00 gate, giving a
 far longer window. Same gate hour, very different session.
+
+### The post-sunrise second pulse — real, and almost never rideable
+
+Some mornings do not end cleanly. The drainage collapses at sunrise, then a **second W/NW pulse**
+rebuilds 30–60 min later and runs until the daytime upslope regime takes over, roughly two hours
+past sunrise. Observed 2026-08-21: drainage peaked 16.2 at 05:30, collapsed to 2.1 by 06:20
+(direction scattering across SW/SSE/S/NNW), then rebuilt to a tight 273–289° and peaked **15.9 at
+07:30** before dying at 08:20 with the direction swinging ESE.
+
+It looks convincing while it is happening — tight direction lock, steady build, falling humidity.
+**Do not read it as the event restarting.** The inversion that drives drainage is gone by then;
+this is the residual westerly gradient briefly reaching the surface as the boundary layer mixes,
+and it is on a solar clock.
+
+Do **not** expect the usual direction-wander early warning here. On 2026-08-21 the speed collapsed
+first (12.1 → 9.2 at 08:20, still locked at 269–285°) and the swing to ESE upslope did not arrive
+until 08:35, *trailing* the collapse by ~15 min. The humidity turn is the better tell: RH fell
+steadily 43% → 30% through the pulse and ticked back up as it died.
+
+Measured over 111 May–Sep mornings (5-min resolution, Soda), asking how often the gate hour busts
+but 07:00–09:00 then delivers a 30-minute sustained run:
+
+| Threshold | Mornings where the late window rescues the session |
+|---|---|
+| **15 mph** | **0 of 111 (0.0%)** |
+| 12 mph | 2 of 112 (~1.8%, incl. 2026-08-21) |
+
+So at a 15 mph threshold, **never advise waiting around for the second pulse** — it has not once
+produced a session in the archive. At 12 mph (bigger kite, foil) it is a real but ~2%-of-mornings
+pattern, and worth one re-check around 07:00 only if they are already at the lake.
+
+> Exploratory, not preregistered: these windows were chosen after observing 2026-08-21, and 111
+> mornings is a modest sample for a ~1% pattern. The 15 mph zero is a genuine zero in this
+> archive, but treat it as "very rare", not "impossible".
 
 Be explicit about which part of their window is solid and which part is speculative. "Solid
 through 6:45, dicey after" is far more useful than a single yes or no, because it tells them
