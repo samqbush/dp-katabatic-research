@@ -1,21 +1,15 @@
 ---
 name: dp-katabatic-archive
 description: >
-  Refresh and maintain the katabatic wind research archive in Neon for the DP Ecowitt and Holfuy
-  stations, then re-score the prediction rule against it. Use this skill whenever the user wants
-  to update,
-  refresh, backfill, or check the state of the wind data archive — including "refresh the
-  katabatic archive", "update the wind data", "run the daily archive", "run the weekly archive",
-  "backfill the meter history", "how far behind is the archive", "re-run the backtest", "re-score
-  the katabatic
-  rule", "how is the wind research looking", "did we get any new rideable mornings", or any
-  request to pull down recent Ecowitt history for research rather than for a go/no-go call. Also
-  trigger when the user asks whether the nightly archive automation or scheduled workflows are
-  running, healthy, or failing, when they ask about backing up the archive, when the user returns
-  from travel and wants to catch the data up, asks whether they
-  are losing data resolution, or asks what the archive currently says about monthly or seasonal
-  wind patterns. Do NOT use this for "should I go to the lake this morning" — that is
-  dp-katabatic-check.
+  Maintain the Neon katabatic wind research archive for DP Ecowitt and Holfuy stations, then
+  relabel, backtest, and score the prediction rules. Use this skill for archive refreshes,
+  backfills, health or freshness checks, database backups, workflow failures, and research
+  summaries of rideable mornings or monthly and seasonal patterns. Trigger for requests such as
+  "refresh the katabatic archive", "update the wind data", "run the daily archive", "backfill the
+  meter history", "how far behind is the archive", "re-run the backtest", "re-score the rule",
+  "are we losing data resolution", or catching up after travel. Use it for recent Ecowitt or
+  Holfuy history needed for research, not a live go/no-go call. For "should I go to the lake this
+  morning", use dp-katabatic-check instead.
 ---
 
 # Katabatic Archive Refresh
