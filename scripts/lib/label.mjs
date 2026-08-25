@@ -27,6 +27,30 @@ export const DEFAULT_THRESHOLD_MPH = 15;
 export const DEFAULT_MIN_SUSTAINED_MIN = 30;
 
 /**
+ * The "canoe club" floor — the sustained speed at which a downwind board and a bigger foil/wing
+ * still works, even though a normal session does not.
+ *
+ * Named for what the riders call it: on these mornings the group switches to canoe-shaped
+ * downwind boards, bigger foils and bigger wings, and rides the gusts. The user's own framing is
+ * "I am able to ride in these conditions as long as the gusts keep coming, but I don't truly
+ * enjoy it" — so this is a real session, materially worse than a 15 mph one, and NOT the same
+ * outcome. It gets its own class rather than a lowered threshold, because collapsing the two
+ * would silently rewrite the meaning of all 99 archived `label-v1` positives.
+ *
+ * Measured over 333 labelable Soda mornings: 99 rideable @15 (29.7%), a further 62 canoe-only
+ * (18.6%), 172 flat. Nearly a fifth of all mornings were previously reported as a plain negative
+ * despite offering a real — if unloved — session.
+ *
+ * ⚠️ There is deliberately NO gust criterion, and that is an empirical result rather than a
+ * simplification. "As long as the gusts keep coming" turns out to be automatically true at this
+ * station: of the 62 canoe mornings, 62/62 had at least half their readings gusting >=18 mph,
+ * 62/62 had a mean gust >=16, and the median gust factor was 1.53. Sustained 12–15 mph drainage
+ * flow at Soda always arrives gusty — that IS the jet's signature. A gust filter would remove at
+ * most one morning while adding a tunable nobody could justify from data.
+ */
+export const CANOE_THRESHOLD_MPH = 12;
+
+/**
  * How long after sunrise a katabatic event can still plausibly be running.
  *
  * §4.5 measured the sustained window closing a median +57 min after sunrise (25th +3, 75th +85).
@@ -222,6 +246,61 @@ export function labelDay(dayRecord, { threshold = DEFAULT_THRESHOLD_MPH, minSust
     cycleType: dayRecord.cycle_type,
     threshold,
     minSustainedMin,
+  };
+}
+
+/**
+ * Classify one archived station-day into a session class — a NEW named label (`session-class-v1`)
+ * layered strictly on top of `labelDay`, which is left byte-identical.
+ *
+ * §7 rule 1: a published label may not be edited, only added to. So this does not touch
+ * `label-v1`; it calls it, and answers a second question the original never asked — "if it wasn't
+ * a real session, was it at least a canoe session?"
+ *
+ *   rideable → sustained >= threshold (15) for >= 30 min, entirely after gate-open. `label-v1`.
+ *   canoe    → not rideable, but sustained >= canoeThreshold (12) for >= 30 min after gate-open.
+ *   flat     → neither.
+ *   null     → unobserved, insufficient resolution, or otherwise unlabelable.
+ *
+ * §4.2 null-safety is inherited rather than reimplemented: if `labelDay` cannot label the day,
+ * neither can this, and `sessionClass` is `null` — NOT `'flat'`. A dark meter is not a calm
+ * morning, and a canoe session is exactly the kind of modest event a fabricated negative would
+ * erase.
+ */
+export function classifySession(
+  dayRecord,
+  {
+    threshold = DEFAULT_THRESHOLD_MPH,
+    canoeThreshold = CANOE_THRESHOLD_MPH,
+    minSustainedMin = DEFAULT_MIN_SUSTAINED_MIN,
+  } = {},
+) {
+  const rideable = labelDay(dayRecord, { threshold, minSustainedMin });
+
+  // Unlabelable at the primary threshold means unlabelable, full stop. Every reason labelDay
+  // bails (outage, 240-min rows, no points) applies identically at the canoe threshold.
+  if (rideable.label === null) {
+    return {
+      ...rideable,
+      sessionClass: null,
+      canoeThreshold,
+      canoeSustainedMinutes: null,
+      canoePreGateSustainedMinutes: null,
+      canoeMissedDueToGate: null,
+    };
+  }
+
+  const canoe = labelDay(dayRecord, { threshold: canoeThreshold, minSustainedMin });
+
+  return {
+    ...rideable,
+    sessionClass: rideable.label ? 'rideable' : canoe.label ? 'canoe' : 'flat',
+    canoeThreshold,
+    canoeSustainedMinutes: canoe.sustainedMinutes ?? null,
+    canoePreGateSustainedMinutes: canoe.preGateSustainedMinutes ?? null,
+    // Same gate trap as the primary label: a morning that ran 12+ only before the gate opened is
+    // not a canoe session, it is an unreachable one.
+    canoeMissedDueToGate: canoe.missedDueToGate ?? null,
   };
 }
 

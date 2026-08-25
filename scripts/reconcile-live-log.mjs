@@ -27,8 +27,9 @@
 
 import { join } from 'path';
 import { REPO_ROOT } from './lib/ecowitt.mjs';
-import { labelDay, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
+import { classifySession, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
 import { readAllRows, upsertRows } from './lib/prediction-log-store.mjs';
+import { SESSION_CLASS_VERSION_V1 } from './lib/versions.mjs';
 import { readDays, closePool } from './lib/archive-store.mjs';
 
 const DEFAULT_LOG = join(REPO_ROOT, 'research', 'prediction-log.csv');
@@ -92,7 +93,10 @@ async function main() {
     }
 
     const threshold = row.threshold_mph ? parseFloat(row.threshold_mph) : DEFAULT_THRESHOLD_MPH;
-    const label = labelDay(rec, { threshold });
+    // `classifySession` is `labelDay` plus the additive canoe tier — the primary `label` it
+    // returns is bit-identical to what `labelDay` alone would give, so the backtest cross-check
+    // below still compares like with like.
+    const label = classifySession(rec, { threshold });
 
     // §4.2: still unobserved (outage, insufficient resolution) — leave blank, try again next run.
     if (label.label === null) {
@@ -120,6 +124,10 @@ async function main() {
       pre_gate_sustained_minutes: label.preGateSustainedMinutes ?? null,
       missed_due_to_gate: label.missedDueToGate === undefined ? null : String(label.missedDueToGate),
       cycle_type: label.cycleType ?? null,
+      session_class_version: SESSION_CLASS_VERSION_V1,
+      session_class: label.sessionClass ?? null,
+      canoe_threshold_mph: label.canoeThreshold ?? null,
+      canoe_sustained_minutes: label.canoeSustainedMinutes ?? null,
     });
   }
 

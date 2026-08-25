@@ -30,6 +30,7 @@ import { upsertRow } from '../../../../scripts/lib/prediction-log-store.mjs';
 import { gateOpenHour } from '../../../../scripts/lib/season.mjs';
 import { computeFeaturesV5, callRuleV5 } from '../../../../scripts/lib/call-rule-v5.mjs';
 import { pickGroupOrOverall } from '../../../../scripts/lib/active-hold.mjs';
+import { CANOE_THRESHOLD_MPH } from '../../../../scripts/lib/label.mjs';
 import { FEATURE_VERSION_V5, RULE_VERSION_V5 } from '../../../../scripts/lib/versions.mjs';
 import {
   zonedTime,
@@ -505,6 +506,38 @@ async function main() {
   console.log(`KATABATIC STRUCTURE: ${call.structure.status}`);
   for (const reason of call.structure.reasons) console.log(`  - ${reason}`);
 
+  /* --- the canoe bar: the SAME rule, evaluated at the 12 mph downwind-board threshold ---
+   *
+   * WHY THIS EXISTS: `MARGINAL` at 15 mph is not an actionable answer for someone whose real
+   * decision is binary at 05:45 — he leaves at 05:55 or he goes back to bed, and "re-check at
+   * 06:00" is a re-check that never happens. Scored over 325 archived mornings, treating
+   * MARGINAL as back-to-bed means the rule misses 47 of 99 rideable mornings (47.5%), not the
+   * 21.2% the research reports under its re-check assumption.
+   *
+   * A second binary at the canoe threshold recovers most of that. It is deliberately a separate
+   * verdict rather than a softened primary one: a canoe session is a materially worse session,
+   * and conflating the two would be exactly the kind of silent redefinition §7 rule 1 forbids.
+   *
+   * Features must be recomputed, not reused — `pctOverThreshold30` and friends are all
+   * threshold-relative, so running callRuleV5 against 15 mph features would answer the wrong
+   * question.
+   */
+  let canoeCall = null;
+  let canoeFeatures = null;
+  if (args.threshold > CANOE_THRESHOLD_MPH) {
+    canoeFeatures = computeFeaturesV5(points, callTimeTs, { ...featureOpts, threshold: CANOE_THRESHOLD_MPH });
+    canoeCall = callRuleV5(canoeFeatures, { threshold: CANOE_THRESHOLD_MPH });
+    console.log(
+      `\n## CANOE CHECK (${RULE_VERSION_V5}, threshold ${CANOE_THRESHOLD_MPH} mph — downwind board, bigger foil/wing)`
+    );
+    console.log(`CANOE: ${canoeCall.verdict}`);
+    for (const reason of canoeCall.reasons) console.log(`  - ${reason}`);
+    if (call.verdict !== 'GO' && canoeCall.verdict === 'GO') {
+      console.log(`  ⚠️  Not a ${args.threshold} mph session, but the canoe bar is met right now.`);
+      console.log(`      Rideable on a downwind board and a bigger foil — the gusts carry it.`);
+    }
+  }
+
   /* --- if an event is already running, show measured checkpoint hold history (§4). This is a
    * SEPARATE question from the verdict above: not "should you go" but "given it's already
    * blowing, how long has this historically held". Reads a static, pre-computed artifact
@@ -558,6 +591,7 @@ async function main() {
       threshold: args.threshold,
       features,
       call,
+      canoeCall,
       label: null,
       humanNote: args.note,
       featureVersion: FEATURE_VERSION_V5,
@@ -566,7 +600,10 @@ async function main() {
 
     const logPath = join(REPO_ROOT, 'research', 'prediction-log.csv');
     await upsertRow(logPath, row);
-    console.log(`\n📝 Logged SESSION ${call.verdict} / STRUCTURE ${call.structure.status} to research/prediction-log.csv (outcome filled in by reconciliation)`);
+    console.log(
+      `\n📝 Logged SESSION ${call.verdict} / STRUCTURE ${call.structure.status}` +
+        `${canoeCall ? ` / CANOE ${canoeCall.verdict}` : ''} to research/prediction-log.csv (outcome filled in by reconciliation)`
+    );
   }
 }
 

@@ -1122,6 +1122,16 @@ but when it does it calibrates the machine label. One row has already earned its
 
 ## 8. Open questions
 
+- [ ] **Should `GO` have a short-window path for late builds?** → §16.7. v5's `GO` gate is
+      `avg30 >= threshold`, which structurally cannot fire on a build that is ~10 minutes old:
+      on 2026-08-23 `avg15` was 13.8 (above the canoe bar) while `avg30` was 9.8, so both the
+      15 mph and 12 mph calls returned `MARGINAL` on a morning that then ran 13.5 avg / 21.5 gust.
+      Candidate: an `avg15`-based `GO` path, gated on direction lock and a positive amplitude
+      delta. **Explicitly not shipped** — one morning is not evidence, and `MARGINAL / BUILDING`
+      converts on only 2 of 21 archived mornings at 15 mph, so the naive version of this idea is
+      known to be bad. Must be scored paired against v5 per the §7.1a promotion bar (opportunity
+      misses no worse, strict-GO false alarms lower, rideable coverage at least equal) before any
+      change, and scored at the canoe bar as well as 15 mph.
 - [ ] Should the archive live in-app, or as a standalone job independent of app releases?
       It must tolerate the annual winter shutdown (§4.2) without alerting or backfilling zeros.
 - [x] ~~**Do the shoulder months actually work?**~~ → **§4.5a: yes, emphatically.** Sep 50%,
@@ -2373,3 +2383,138 @@ silently defaulting to midnight, hourly buckets are keyed on station day so a cr
 sorts correctly, and the NO DATA message prints the window it actually queried. Regression tests
 live in `__tests__/utils/katabaticCheckSince.test.js`; the spurious row was retracted via a new
 `removeRows()` in `prediction-log-store.mjs`, which remains the log's only writer.
+
+## 16. The canoe tier (2026-08-23) — a whole class of session the label never named
+
+### 16.1 The morning that prompted it
+
+At 05:45 the skill called `SESSION MARGINAL / STRUCTURE PRESENT` at the 15 mph threshold, with the
+advice to re-check at 06:00. The user went back to bed. The morning then ran:
+
+| Hour | Avg | Peak gust | Mean dir |
+|---|---:|---:|---|
+| 06:00 | 13.5 | 21.5 | 273° |
+| 07:00 | 10.7 | 17.7 | 284° |
+
+**The 15 mph call was correct.** The longest sustained run at or above 15 mph all morning was a
+single 5-minute reading (15.4 at 05:40); `label-v1` scores the day `false`. But the riders who did
+go out had a real session on downwind boards — what they call **"canoe club"**: canoe-shaped
+downwind boards, bigger foils, bigger wings, riding the gusts. The user's own framing:
+
+> "I am able to ride in these conditions as long as the gusts keep coming, but I don't *truly*
+> enjoy it."
+
+So the morning was neither a session nor a bust, and the label had no word for it.
+
+### 16.2 The tier is large, and it was being reported as a plain negative
+
+Measured over all 333 labelable Soda mornings, gate-conditioned exactly as `label-v1` is:
+
+| Class | Definition | Mornings | Share |
+|---|---|---:|---:|
+| rideable | ≥15 mph sustained ≥30 min post-gate (`label-v1`) | 99 | 29.7% |
+| **canoe** | not rideable, but ≥12 mph sustained ≥30 min post-gate | **62** | **18.6%** |
+| flat | neither | 172 | 51.7% |
+
+Nearly a fifth of all mornings delivered a real — if unloved — session while the research recorded
+them as indistinguishable from dead calm.
+
+### 16.3 The gust criterion is redundant, and that is an empirical finding
+
+The obvious way to encode "as long as the gusts keep coming" is a gust floor alongside the
+sustained floor. Measured on the 62 canoe mornings, it earns nothing:
+
+| Gust test | Canoe mornings passing |
+|---|---:|
+| ≥50% of readings gusting ≥18 mph | **62 / 62** |
+| Mean gust ≥16 mph | **62 / 62** |
+| Mean gust ≥18 mph | 61 / 62 |
+
+Median mean-gust 20.8 mph; median gust factor **1.53** (p10 1.39, p90 1.81). Sustained 12–15 mph
+drainage flow at Soda *always* arrives gusty — that gustiness is the jet's signature, not an
+independent condition. A gust filter would remove at most one morning while adding a tunable
+nobody could justify from data. **`CANOE_THRESHOLD_MPH = 12` is therefore the entire definition.**
+
+### 16.4 Implementation — additive, never a redefinition
+
+§7 rule 1 forbids editing a published label, and 99 archived positives plus five frozen rule
+versions depend on `label-v1` meaning exactly what it meant. So `classifySession()` in
+`scripts/lib/label.mjs` *calls* `labelDay` rather than replacing it, and returns `sessionClass`
+alongside the untouched primary label. The diff to `label.mjs` is 79 insertions and **zero
+deletions**.
+
+Inherited rather than reimplemented:
+
+- **Gate-conditioning.** A morning running 12+ only before the gate opens is `flat`, not `canoe` —
+  unreachable is not rideable. Recorded in `canoeMissedDueToGate`.
+- **§4.2 null-safety.** An unobserved or insufficient-resolution morning is `sessionClass: null`,
+  never `'flat'`. A canoe session is exactly the modest event a fabricated negative would erase.
+
+Log columns `session_class_version`, `session_class`, `canoe_threshold_mph`,
+`canoe_sustained_minutes`, `canoe_verdict` are **appended last**, so every pre-existing row
+round-trips with them blank — meaning "not classified", never "flat". Guard rails in
+`__tests__/utils/sessionClass.test.js`, including a regression test asserting `classifySession`
+and `labelDay` return identical primary labels.
+
+### 16.5 The accounting gap this exposed: `MARGINAL` assumes a re-check that never happens
+
+§7.1a scores v5 as missing **21 of 99** rideable mornings (21.2%), counting its 102 `MARGINAL`
+calls as "opportunity-preserving re-checks" rather than misses. That accounting silently assumes
+the rider re-checks. The user's actual decision model, stated plainly:
+
+> "Checking again at 6 only works if I'm awake and not tired, and even then I'm going to leave at
+> 5:55 to make the gate or go back to bed."
+
+His decision is **binary at 05:45**. Under that model `MARGINAL` *is* `NO_GO`, and the honest miss
+rate is:
+
+| Accounting | Missed rideable mornings |
+|---|---:|
+| §7.1a as published (MARGINAL = re-check) | 21 / 99 (21.2%) |
+| **Binary decider (MARGINAL = back to bed)** | **47 / 99 (47.5%)** |
+
+Both numbers are correct about different users. The published one was never wrong; it was answering
+a question this rider does not ask. **Reporting only the 21.2% figure overstates the rule's
+usefulness to the person actually using it by more than a factor of two.**
+
+### 16.6 The canoe call recovers most of that gap — measured at 05:45, n=333
+
+Running the *same* `call-rule-v5` at the 12 mph canoe bar (features recomputed, since
+`pctOverThreshold30` and friends are threshold-relative), scored against "did I get **any**
+session, rideable or canoe":
+
+| current@15 → canoe@12 | n | rideable | canoe | flat | any session |
+|---|---:|---:|---:|---:|---:|
+| GO → GO | 71 | 52 | 12 | 7 | 90% |
+| **MARGINAL → GO** | **33** | **12** | **13** | **8** | **76%** |
+| MARGINAL → MARGINAL | 71 | 14 | 22 | 35 | 51% |
+| NO_GO → MARGINAL | 26 | 1 | 1 | 24 | 8% |
+| NO_GO → NO_GO | 128 | 20 | 14 | 94 | 27% |
+
+**The `MARGINAL → GO` row is the finding: 33 mornings where the skill currently says "re-check at
+06:00" — which for this rider means going back to bed — and the canoe bar gives a decisive `GO`
+that paid off 76% of the time.** That is ~33 recovered mornings per archive-span at better than
+three-in-four odds.
+
+The canoe `GO` fires on 104 mornings at 85.6% any-session precision, versus the 15 mph `GO`'s 71
+mornings at 90.1%. Trading 4.5 points of precision for 33 extra actionable mornings is a good deal
+for someone whose alternative is sleeping through them.
+
+### 16.7 What this does NOT fix — stated plainly
+
+**The prompting morning is still not callable.** Replaying 2026-08-23 at 05:45 gives `MARGINAL` at
+*both* thresholds, because `avg30` was 9.8 mph — the event was ~10 minutes old and 20 of those 30
+minutes predate the build. It lands in the `MARGINAL → MARGINAL` row above: 71 mornings, 51% any
+session. A coin flip, honestly labelled as one.
+
+The structural cause is that v5's `GO` gate is `avg30 >= threshold`, and a 30-minute trailing mean
+**cannot** fire on a build that is 10 minutes old. Today's `avg15` was 13.8 — above the canoe bar —
+while `avg30` was 9.8. That asymmetry is a real candidate signal (a short-window `GO` path for
+late builds) and it is deliberately **not shipped here**: promoting it on the strength of one
+morning is precisely the §7.1a failure the promotion bar exists to prevent. Logged as an open
+question for §8, to be tested paired against v5 with misses, precision and false alarms reported
+before anything changes.
+
+Also unchanged: the `MARGINAL / BUILDING` fingerprint remains a poor bet at 15 mph — 21 archived
+mornings at 05:45, 2 rideable (9.5%). A late build seen at 05:45 is a trap at the 15 mph bar. Its
+value, as §16.6 shows, is at the canoe bar instead.

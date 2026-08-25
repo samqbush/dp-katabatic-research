@@ -23,7 +23,7 @@ import { computeFeaturesV2, callRuleV2, FEATURE_VERSION as FEATURE_VERSION_V2, R
 import { computeFeaturesV3, callRuleV3, FEATURE_VERSION as FEATURE_VERSION_V3, RULE_VERSION as RULE_VERSION_V3 } from './lib/call-rule-v3.mjs';
 import { computeFeaturesV4, callRuleV4, FEATURE_VERSION as FEATURE_VERSION_V4, RULE_VERSION as RULE_VERSION_V4 } from './lib/call-rule-v4.mjs';
 import { computeFeaturesV5, callRuleV5, FEATURE_VERSION as FEATURE_VERSION_V5, RULE_VERSION as RULE_VERSION_V5 } from './lib/call-rule-v5.mjs';
-import { labelDay, parseArchiveDate, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
+import { classifySession, parseArchiveDate, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
 import { calcSunrise } from './lib/sunrise.mjs';
 import { buildLogRow } from './lib/prediction-log.mjs';
 import { readAllRows, upsertRows } from './lib/prediction-log-store.mjs';
@@ -82,7 +82,9 @@ async function main() {
 
   for (const date of [...target.keys()].sort()) {
     const rec = target.get(date);
-    const label = labelDay(rec, { threshold: args.threshold });
+    // `classifySession` returns everything `labelDay` did, plus the additive canoe tier. The
+    // primary `label` is unchanged, so every frozen v1–v5 result stays reproducible.
+    const label = classifySession(rec, { threshold: args.threshold });
 
     // §4.2: unobserved is NOT a negative. Excluded entirely rather than counted as a calm day.
     if (label.label === null) {

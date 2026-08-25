@@ -18,9 +18,14 @@
  * row self-describing. Rows written before these columns existed are backfilled to `legacy` by
  * `scripts/migrate-prediction-log.mjs` rather than left blank, so "legacy" is a fact about the
  * row, not an absence of one.
+ *
+ * The trailing `session_class*` / `canoe_*` columns are an ADDITIVE outcome tier (§ canoe club):
+ * `label` keeps its original 15 mph meaning, and the canoe columns record whether a morning that
+ * missed that bar still delivered a 12 mph downwind-board session. They are appended last so
+ * every pre-existing row round-trips with them blank — which means "not classified", never "flat".
  */
 
-import { FEATURE_VERSION_V1, RULE_VERSION_V1, LABEL_VERSION_V1 } from './versions.mjs';
+import { FEATURE_VERSION_V1, RULE_VERSION_V1, LABEL_VERSION_V1, SESSION_CLASS_VERSION_V1 } from './versions.mjs';
 
 export const LOG_COLUMNS = [
   'source', // backtest | live
@@ -70,6 +75,14 @@ export const LOG_COLUMNS = [
   'pre_gate_sustained_minutes',
   'missed_due_to_gate',
   'cycle_type',
+  // --- the canoe tier (session-class-v1), appended so pre-existing rows round-trip blank ---
+  // Blank here means "this row predates the session class", NOT "flat". Same null-vs-false
+  // discipline the `label` column already follows (§4.2).
+  'session_class_version',
+  'session_class',
+  'canoe_threshold_mph',
+  'canoe_sustained_minutes',
+  'canoe_verdict',
   // --- optional, human, never required ---
   'human_note',
 ];
@@ -100,10 +113,12 @@ export function buildLogRow({
   features,
   call,
   label,
+  canoeCall = null,
   humanNote = null,
   featureVersion = FEATURE_VERSION_V1,
   ruleVersion = RULE_VERSION_V1,
   labelVersion = LABEL_VERSION_V1,
+  sessionClassVersion = SESSION_CLASS_VERSION_V1,
 }) {
   return {
     source,
@@ -154,6 +169,15 @@ export function buildLogRow({
     pre_gate_sustained_minutes: label?.preGateSustainedMinutes ?? null,
     missed_due_to_gate: label?.missedDueToGate === undefined ? null : String(label.missedDueToGate),
     cycle_type: label?.cycleType ?? null,
+    // Present only when `label` is a `classifySession` result; a plain `labelDay` result leaves
+    // these blank, which is the honest encoding of "this row was never session-classified".
+    session_class_version: label?.sessionClass === undefined ? null : sessionClassVersion,
+    session_class: label?.sessionClass ?? null,
+    canoe_threshold_mph: label?.canoeThreshold ?? null,
+    canoe_sustained_minutes: label?.canoeSustainedMinutes ?? null,
+    // The call-time counterpart: what the rule said at the canoe threshold. Independent of the
+    // outcome columns above, and blank when no canoe call was made.
+    canoe_verdict: canoeCall?.verdict ?? null,
     human_note: humanNote,
   };
 }

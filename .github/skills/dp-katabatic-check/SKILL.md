@@ -79,6 +79,45 @@ leaving; it is not a soft GO. `NO_GO` means do not leave for the requested thres
 color and any user-reported rideability context, but do not silently replace the versioned
 session verdict.
 
+### The third call: `CANOE CHECK` — do not skip it when SESSION is not GO
+
+Below the structure block the script prints a **third** verdict: the same `call-rule-v5` evaluated
+at the **12 mph canoe threshold** — "canoe club", i.e. downwind boards, bigger foils, bigger wings,
+riding the gusts. The rider's own words: *"I am able to ride in these conditions as long as the
+gusts keep coming, but I don't truly enjoy it."*
+
+So a canoe session is a **real but materially worse** session. Report it as its own thing; never
+merge it into the primary verdict and never call a canoe morning a session.
+
+**`SESSION MARGINAL / CANOE GO` is the single most valuable combination the script produces, and
+it is the one most easily wasted.** Measured at 05:45 over 333 archived mornings (§16.6):
+
+| current@15 → canoe@12 | n | any session |
+|---|---:|---:|
+| GO → GO | 71 | 90% |
+| **MARGINAL → GO** | **33** | **76%** |
+| MARGINAL → MARGINAL | 71 | 51% |
+| NO_GO → NO_GO | 128 | 27% |
+
+On those 33 mornings the 15 mph answer is "re-check at 06:00" — which for this rider means going
+back to bed — while the canoe bar gives a decisive call that paid off three times in four. **If
+`CANOE: GO` prints, say so in your first two lines**, along with the fact that it means big-gear
+conditions rather than a proper session, so he can decide with his gear in mind.
+
+Corollary: `MARGINAL / MARGINAL` is a genuine coin flip (51%). Say that plainly. Do not dress it
+up as leaning either way.
+
+### Why `MARGINAL` alone is close to useless to this rider
+
+§16.5: the research scores `MARGINAL` as an "opportunity-preserving re-check", which assumes he
+re-checks. He does not — *"checking again at 6 only works if I'm awake and not tired, and even then
+I'm going to leave at 5:55 to make the gate or go back to bed."* His decision is **binary at
+05:45**. Under that model the rule misses **47 of 99 rideable mornings (47.5%)**, not the 21.2%
+§7.1a reports.
+
+Both numbers are correct about different users. Never quote the 21.2% to him as though it described
+his experience.
+
 If the event is **already running** (30-min average at/above threshold now), the script also
 prints `## ACTIVE-EVENT HOLD HISTORY`: real measured hold rates at gate-open, gate+30, and
 gate+60 for mornings that looked like this one, pulled from `research/active-hold-calibration.json`
@@ -277,14 +316,16 @@ certainty here is the single most costly failure mode this skill has.
 Structure that works well:
 
 1. **Session verdict up front** — GO / MARGINAL (re-check, do not leave) / NO_GO.
-2. **Katabatic structure** — present, possible, absent, or unknown; never a substitute verdict.
-3. **Current numbers** — a small table of the most recent readings (time, avg, gust, direction).
+2. **Canoe verdict** — whenever SESSION is not GO. `CANOE: GO` is actionable and belongs high;
+   say it means downwind board and bigger gear, not a proper session.
+3. **Katabatic structure** — present, possible, absent, or unknown; never a substitute verdict.
+4. **Current numbers** — a small table of the most recent readings (time, avg, gust, direction).
    Concrete numbers let them sanity-check you.
-4. **Why you think it's real (or not)** — walk the signals that support the call. This is where
+5. **Why you think it's real (or not)** — walk the signals that support the call. This is where
    direction lock, build shape, humidity, and neighbor contrast go.
-5. **The window assessment** — what happens across their specific session block, and when you
+6. **The window assessment** — what happens across their specific session block, and when you
    expect it to fade.
-6. **Actionable advice** — anything time-sensitive. If the back half of their window is at risk,
+7. **Actionable advice** — anything time-sensitive. If the back half of their window is at risk,
    tell them not to dawdle at the truck.
 
 Keep it tight. Tables beat paragraphs for numbers. Skip preamble entirely — no "I checked the
@@ -339,6 +380,11 @@ The lesson is not "be more pessimistic." It is that structural evidence answers 
 question from rideability. Under v5 this setup is never promoted to GO by direction, humidity,
 or neighbors; it remains MARGINAL unless the amplitude state earns a threshold-specific call.
 
+**Retrospective note (2026-08-23):** under the canoe tier this morning classifies as **canoe** —
+10 sustained minutes over 15, but **55** over 12. The user's unprompted words at the time were
+*"light session"*, which is the canoe class described in plain English before the class existed.
+The right call here was never a flat bust: it was `SESSION NO_GO / CANOE GO`.
+
 ### Case 3 — real structure, session NO_GO (2026-08-19)
 
 At 05:45 the direction, drying air, and quiet neighbors described a real local drainage pulse.
@@ -347,6 +393,27 @@ fell 14.9 → 14.3 → 10.9 mph. The 6am hour then averaged 6.0 mph.
 
 The correct dual call is `SESSION NO_GO / KATABATIC STRUCTURE PRESENT`: useful physical
 information without sending the rider to a sub-threshold session.
+
+This one is genuinely `flat` on the canoe tier too — 0 sustained minutes at 12 mph. Not every
+sub-threshold morning is a canoe morning, and saying so is the point of having the class.
+
+### Case 4 — the late build nobody can call (2026-08-23)
+
+At 05:45: 30-min avg 7.6, `over-15` 0%, but the last three readings ran 4.7 → 8.2 → **12.6** at a
+tight 274–285°, with both neighbours calm. `SESSION MARGINAL / STRUCTURE PRESENT`. The rider went
+back to bed. The morning then averaged **13.5 with 21.5 mph gusts** through the 6am hour — a
+textbook canoe session, and the group that went out called it "canoe club".
+
+**Do not read this as a missed call.** At 15 mph the morning never happened: the longest sustained
+run at or above 15 was one 5-minute reading. And the canoe bar did not save it either — replayed
+at 05:45 the canoe check *also* returns `MARGINAL`, because `avg30` was 9.8 and a 30-minute
+trailing mean physically cannot resolve a build that is ten minutes old.
+
+This is the `MARGINAL / MARGINAL` cell: **71 archived mornings, 51% delivered any session.** A coin
+flip. Say exactly that. The temptation after a morning like this is to start reading late builds as
+promising — resist it: `MARGINAL / BUILDING` at 15 mph converted on just **2 of 21** archived
+mornings (9.5%). A late build at 05:45 is a trap at the 15 mph bar; its value is at the canoe bar,
+and only once `avg30` catches up.
 
 ## Notes on the data source
 

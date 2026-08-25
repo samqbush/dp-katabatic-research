@@ -30,6 +30,13 @@ export const RULE_VERSION_V5 = 'call-rule-v5';
 // row is fully self-describing without cross-referencing code history.
 export const LABEL_VERSION_V1 = 'label-v1';
 
+// The session CLASS is a second, additive outcome definition layered on top of label-v1 rather
+// than a revision of it (`classifySession` in scripts/lib/label.mjs). It answers "and if it
+// wasn't rideable, was it at least a canoe session?" — the 12 mph downwind-board/big-foil tier.
+// label-v1 keeps its exact original meaning for all 99 archived positives; rows that also carry
+// a session class say so here.
+export const SESSION_CLASS_VERSION_V1 = 'session-class-v1';
+
 // Pre-refactor live rows (written before this log gained version columns) cannot be assumed to
 // match either v1 or v2 feature math — the live script had its own separately-drifted
 // implementation. Tag them explicitly rather than pretending they are comparable to either.
