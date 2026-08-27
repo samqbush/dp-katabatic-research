@@ -21,7 +21,7 @@ on:
     # 20:00 UTC = 14:00 MDT. Late enough that the katabatic morning (roughly 05:00–09:00 local)
     # is complete and in the archive; the remainder of the day is picked up by tomorrow's run,
     # which re-fetches a 14-day window anyway.
-    - cron: '0 20 * * *'
+    - cron: '17 20 * * *'
   workflow_dispatch:
     inputs:
       days:

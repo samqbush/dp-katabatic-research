@@ -14,10 +14,10 @@ on:
   schedule:
     # 01:30 UTC = 19:30 MDT the previous evening. The 00Z run publishes ~00:50 UTC, so this is
     # ~40 min after publication, and it is also roughly when the go/no-go decision gets made.
-    - cron: '30 1 * * *'
+    - cron: '37 1 * * *'
     # Recovery for delayed Open-Meteo ingestion. Existing issued predictions are a green no-op.
     # 04:00 UTC = 22:00 MDT / 21:00 MST the previous evening.
-    - cron: '0 4 * * *'
+    - cron: '17 4 * * *'
   workflow_dispatch:
     inputs:
       date:
