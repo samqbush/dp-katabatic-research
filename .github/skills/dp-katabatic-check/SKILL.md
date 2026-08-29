@@ -86,13 +86,14 @@ at the **12 mph canoe threshold** — "canoe club", i.e. downwind boards, bigger
 riding the gusts. The rider's own words: *"I am able to ride in these conditions as long as the
 gusts keep coming, but I don't truly enjoy it."*
 
-So a canoe session is a **real but materially worse** session. Report it as its own thing; never
-merge it into the primary verdict and never call a canoe morning a session.
+So a canoe morning is a **real but materially worse gust-driven riding outcome**. Report it as
+`gust-driven/canoe`; never merge it into the primary sustained verdict, but also never flatten it
+into "not rideable" or "a bust."
 
 **`SESSION MARGINAL / CANOE GO` is the single most valuable combination the script produces, and
 it is the one most easily wasted.** Measured at 05:45 over 333 archived mornings (§16.6):
 
-| current@15 → canoe@12 | n | any session |
+| current@15 → canoe@12 | n | any rideable outcome |
 |---|---:|---:|
 | GO → GO | 71 | 90% |
 | **MARGINAL → GO** | **33** | **76%** |
@@ -102,7 +103,7 @@ it is the one most easily wasted.** Measured at 05:45 over 333 archived mornings
 On those 33 mornings the 15 mph answer is "re-check at 06:00" — which for this rider means going
 back to bed — while the canoe bar gives a decisive call that paid off three times in four. **If
 `CANOE: GO` prints, say so in your first two lines**, along with the fact that it means big-gear
-conditions rather than a proper session, so he can decide with his gear in mind.
+conditions rather than a proper sustained session, so he can decide with his gear in mind.
 
 Corollary: `MARGINAL / MARGINAL` is a genuine coin flip (51%). Say that plainly. Do not dress it
 up as leaning either way.
@@ -262,9 +263,10 @@ but 07:00–09:00 then delivers a 30-minute sustained run:
 | **15 mph** | **0 of 111 (0.0%)** |
 | 12 mph | 2 of 112 (~1.8%, incl. 2026-08-21) |
 
-So at a 15 mph threshold, **never advise waiting around for the second pulse** — it has not once
-produced a session in the archive. At 12 mph (bigger kite, foil) it is a real but ~2%-of-mornings
-pattern, and worth one re-check around 07:00 only if they are already at the lake.
+So at a 15 mph threshold, **never advise waiting around for a strict sustained session from the
+second pulse** — it has not once met that label in the archive. This does not mean useful
+gust-driven riding is impossible. At 12 mph (bigger kite, foil) it is a real but
+~2%-of-mornings pattern, and worth one re-check around 07:00 only if they are already at the lake.
 
 > Exploratory, not preregistered: these windows were chosen after observing 2026-08-21, and 111
 > mornings is a modest sample for a ~1% pattern. The 15 mph zero is a genuine zero in this
@@ -330,6 +332,12 @@ Structure that works well:
 
 Keep it tight. Tables beat paragraphs for numbers. Skip preamble entirely — no "I checked the
 meter and here's what I found", just lead with the answer.
+
+For retrospective questions, keep two axes explicit: the observed session outcome is
+`sustained`, `gust-driven/canoe`, `flat`, or `unknown`; the full-morning physical mechanism is
+`katabatic`, `transition-hybrid`, `synoptic`, `absent`, or `unknown`. The live
+`KATABATIC STRUCTURE` line is only the structure visible at call time, not that completed-morning
+mechanism classification.
 
 ## Calibration examples
 

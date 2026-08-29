@@ -31,6 +31,13 @@ function fixture() {
       observedMorningMaxSpeedMph: null,
       observedMorningMaxGustMph: null,
       observedMorningSustainedMinutes: null,
+      sessionOutcome: null,
+      flowClass: null,
+      sustainedMinutes: null,
+      canoeSustainedMinutes: null,
+      canoeMeanGustMph: null,
+      canoePeakGustMph: null,
+      canoePctGustAtLeast18: null,
       avgForecastWindMph: 10.2,
       avgLidM: 80,
       predictionMode: 'forward',
@@ -46,6 +53,13 @@ function fixture() {
       observedMorningMaxSpeedMph: 18.4,
       observedMorningMaxGustMph: 23.1,
       observedMorningSustainedMinutes: 35,
+      sessionOutcome: 'gust-driven/canoe',
+      flowClass: 'transition-hybrid',
+      sustainedMinutes: 20,
+      canoeSustainedMinutes: 35,
+      canoeMeanGustMph: 20.4,
+      canoePeakGustMph: 23.1,
+      canoePctGustAtLeast18: 86,
       avgForecastWindMph: 3.1,
       avgLidM: 450,
       predictionMode: 'retrospective',
@@ -64,15 +78,18 @@ describe('GitHub Discussion report', () => {
     expect(report).toContain('UNSAFE: research \\| display only.');
     expect(report).toContain('2026-08-18<br><sub>forward</sub>');
     expect(report).toContain('2026-08-10<br><sub>retrospective</sub>');
-    expect(report).toContain(`| Date / sample | Call | Chance | Max wind | Max gust | Minutes ≥${REPORT_THRESHOLD_MPH} mph | HRRR wind | Lid |`);
-    expect(report).toContain('18.4 mph');
+    expect(report).toContain(`| Date / sample | Call | Chance | Session outcome | Flow mechanism | Minutes ≥${REPORT_THRESHOLD_MPH} | Minutes ≥12 | Gust support | HRRR wind | Lid |`);
+    expect(report).toContain('gust-driven/canoe');
+    expect(report).toContain('transition-hybrid');
+    expect(report).toContain('20 min');
     expect(report).toContain('23.1 mph');
     expect(report).toContain('35 min');
     expect(report).not.toContain('| Outcome | Result |');
     expect(report).not.toContain('MISSED SESSION');
     const forecastOnlyRow = report.split('\n').find((line) => line.startsWith('| 2026-08-18'));
     expect(forecastOnlyRow).toContain('— | — | —');
-    expect(report).toContain('midnight through sunrise +3 hours');
+    expect(report).toContain('gate-conditioned through sunrise +3 hours');
+    expect(report).toContain('Chance still predicts only the strict sustained target');
     expect(report).toContain('not calm wind');
     expect(report).toContain('wind-lid-logistic-v1');
   });

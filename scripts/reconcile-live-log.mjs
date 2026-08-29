@@ -28,9 +28,15 @@
 import { join } from 'path';
 import { REPO_ROOT } from './lib/ecowitt.mjs';
 import { classifySession, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
+import { classifyFlow } from './lib/flow-class.mjs';
 import { readAllRows, upsertRows } from './lib/prediction-log-store.mjs';
 import { SESSION_CLASS_VERSION_V1 } from './lib/versions.mjs';
 import { readDays, closePool } from './lib/archive-store.mjs';
+import {
+  SODA_NEIGHBOR_SLUGS,
+  SODA_SLUG,
+  stationBySlugOrName,
+} from './lib/stations.mjs';
 
 const DEFAULT_LOG = join(REPO_ROOT, 'research', 'prediction-log.csv');
 
@@ -61,23 +67,39 @@ async function main() {
   // Anything already labeled — true, false, or explicitly recorded as unobserved — is left alone.
   // Only a genuinely blank label means "the morning hadn't happened yet, or the archive hadn't
   // caught up, last time this ran."
-  const pending = rows.filter((r) => r.source === 'live' && (r.label === null || r.label === ''));
+  const pending = rows.filter((r) => {
+    if (r.source !== 'live') return false;
+    const station = stationBySlugOrName(r.station);
+    const needsLabel = r.label === null || r.label === '';
+    const needsFlow = station.slug === SODA_SLUG && !r.flow_class_version;
+    return needsLabel || needsFlow;
+  });
   if (!pending.length) {
     console.log('No pending live rows to reconcile.');
     return;
   }
 
-  const stationSlugs = [...new Set(pending.map((r) => r.station).filter(Boolean))];
+  const stationRefs = [...new Set(pending.map((r) => r.station).filter(Boolean))];
   const archives = new Map();
-  for (const slug of stationSlugs) archives.set(slug, await loadStation(slug));
+  for (const stationRef of stationRefs) {
+    const station = stationBySlugOrName(stationRef);
+    archives.set(stationRef, await loadStation(station.slug));
+  }
+  const neighborArchives = new Map();
+  for (const slug of SODA_NEIGHBOR_SLUGS) {
+    neighborArchives.set(slug, await loadStation(slug));
+  }
 
   // Independent cross-check population: every backtest label already computed for a given
   // (station, date), keyed the same way, so a mismatch is a genuine one-line lookup.
-  const backtestLabelByKey = new Map();
+  const backtestOutcomeByKey = new Map();
   for (const r of rows) {
     if (r.source !== 'backtest') continue;
     if (r.label !== 'true' && r.label !== 'false') continue;
-    backtestLabelByKey.set(`${r.station}|${r.date}`, r.label === 'true');
+    backtestOutcomeByKey.set(`${r.station}|${r.date}`, {
+      label: r.label === 'true',
+      flowClass: r.flow_class ?? null,
+    });
   }
 
   const updates = [];
@@ -97,23 +119,53 @@ async function main() {
     // returns is bit-identical to what `labelDay` alone would give, so the backtest cross-check
     // below still compares like with like.
     const label = classifySession(rec, { threshold });
+    const station = stationBySlugOrName(row.station);
+    const flow = station.slug === SODA_SLUG
+      ? classifyFlow(
+        rec,
+        SODA_NEIGHBOR_SLUGS.map((slug) => ({
+          slug,
+          record: neighborArchives.get(slug)?.get(row.date),
+        })),
+      )
+      : null;
 
     // §4.2: still unobserved (outage, insufficient resolution) — leave blank, try again next run.
     if (label.label === null) {
       stillPending++;
       continue;
     }
+    const fetchedAtTs = rec.fetched_at ? Math.floor(new Date(rec.fetched_at).getTime() / 1000) : null;
+    if (
+      label.sessionWindowEndTs &&
+      (fetchedAtTs === null || fetchedAtTs <= label.sessionWindowEndTs)
+    ) {
+      stillPending++;
+      continue;
+    }
 
     const key = `${row.station}|${row.date}`;
-    if (backtestLabelByKey.has(key) && backtestLabelByKey.get(key) !== label.label) {
+    const backtestOutcome = backtestOutcomeByKey.get(key);
+    if (backtestOutcome && backtestOutcome.label !== label.label) {
       mismatches++;
       console.error(
         `❌ LABEL MISMATCH ${key}: live-reconciled label=${label.label} but backtest label=` +
-          `${backtestLabelByKey.get(key)}. Same day, same station, two different answers — ` +
+          `${backtestOutcome.label}. Same day, same station, two different answers — ` +
           `investigate before trusting either the live log or the backtest for this date.`
       );
       // Still record the outcome (it's the ground truth per THIS row's own computation), but the
       // mismatch is surfaced loudly rather than silently reconciled away.
+    }
+    if (
+      flow &&
+      backtestOutcome?.flowClass &&
+      backtestOutcome.flowClass !== flow.flowClass
+    ) {
+      mismatches++;
+      console.error(
+        `❌ FLOW MISMATCH ${key}: live-reconciled flow=${flow.flowClass} but backtest flow=` +
+          `${backtestOutcome.flowClass}.`
+      );
     }
 
     updates.push({
@@ -128,6 +180,14 @@ async function main() {
       session_class: label.sessionClass ?? null,
       canoe_threshold_mph: label.canoeThreshold ?? null,
       canoe_sustained_minutes: label.canoeSustainedMinutes ?? null,
+      canoe_mean_gust_mph: label.canoeMeanGustMph ?? null,
+      canoe_peak_gust_mph: label.canoePeakGustMph ?? null,
+      canoe_pct_gust_at_least_18: label.canoePctGustAtLeast18 ?? null,
+      flow_class_version: flow?.flowClassVersion ?? null,
+      flow_class: flow?.flowClass ?? null,
+      flow_evidence: flow
+        ? JSON.stringify({ reasons: flow.reasons, ...flow.evidence })
+        : null,
     });
   }
 

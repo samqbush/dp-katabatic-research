@@ -884,4 +884,24 @@ describe('prediction-log-store — atomic upsert and deduplication', () => {
     const second = row({ source: 'live', callTime: '05:45:40' });
     expect(rowKey(first)).not.toBe(rowKey(second));
   });
+
+  it('round-trips blank, stamped unknown, and absent flow outcomes distinctly', async () => {
+    await upsertRows(logPath, [
+      row({ date: '2026-07-15' }),
+      row({
+        date: '2026-07-16',
+        flow: { flowClassVersion: 'flow-class-v1', flowClass: 'unknown', reasons: ['ambiguous'], evidence: {} },
+      }),
+      row({
+        date: '2026-07-17',
+        flow: { flowClassVersion: 'flow-class-v1', flowClass: 'absent', reasons: ['none'], evidence: {} },
+      }),
+    ]);
+    const rows = await readAllRows(logPath);
+    expect(rows.map((entry) => [entry.flow_class_version, entry.flow_class])).toEqual([
+      [null, null],
+      ['flow-class-v1', 'unknown'],
+      ['flow-class-v1', 'absent'],
+    ]);
+  });
 });

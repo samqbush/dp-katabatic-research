@@ -1,13 +1,15 @@
 import { query } from "./db.mjs";
 import { readDays, isoDay } from "./archive-store.mjs";
-import { labelDay, parseArchiveDate, summarizeMorningWind } from "./label.mjs";
+import { classifySession, parseArchiveDate, summarizeMorningWind } from "./label.mjs";
+import { classifyFlow } from "./flow-class.mjs";
 import {
     experimentalCallResult,
     FORWARD_HOLDOUT_START,
 } from "./night-before-call.mjs";
 import { zonedTimeFrom } from "./zone.mjs";
+import { SODA_NEIGHBOR_SLUGS, SODA_SLUG } from "./stations.mjs";
 
-const SODA = "dp-soda-lakes";
+const SODA = SODA_SLUG;
 
 function round(value, digits = 1) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
@@ -181,7 +183,18 @@ async function loadForecasts(modelVersion, { from, to } = {}) {
     }));
 }
 
-function summarizeMorning(record, label, forecast) {
+function sessionOutcome(sessionClass) {
+    if (sessionClass === "rideable") return "sustained";
+    if (sessionClass === "canoe") return "gust-driven/canoe";
+    return sessionClass;
+}
+
+function morningIsComplete(record, label) {
+    if (!label.sessionWindowEndTs || !record.fetched_at) return false;
+    return new Date(record.fetched_at).getTime() / 1000 > label.sessionWindowEndTs;
+}
+
+function summarizeMorning(record, label, forecast, flow) {
     const date = parseArchiveDate(record.date);
     const start = Math.floor(zonedTimeFrom(date, label.gateOpenHour, 0, 0).getTime() / 1000);
     const end = label.sessionWindowEndTs ?? null;
@@ -198,7 +211,17 @@ function summarizeMorning(record, label, forecast) {
         pointCount: record.point_count,
         label: label.label,
         labelReason: label.reason ?? null,
+        sessionClass: label.sessionClass,
+        sessionOutcome: sessionOutcome(label.sessionClass),
         sustainedMinutes: label.sustainedMinutes ?? null,
+        canoeSustainedMinutes: label.canoeSustainedMinutes ?? null,
+        canoeMeanGustMph: round(label.canoeMeanGustMph),
+        canoePeakGustMph: round(label.canoePeakGustMph),
+        canoePctGustAtLeast18: round(label.canoePctGustAtLeast18, 0),
+        flowClassVersion: flow.flowClassVersion,
+        flowClass: flow.flowClass,
+        flowReasons: flow.reasons,
+        flowEvidence: flow.evidence,
         gateOpenHour: label.gateOpenHour,
         maxSpeedMph: round(maxOf(morningPoints, "speed")),
         maxGustMph: round(maxOf(morningPoints, "gust")),
@@ -232,7 +255,17 @@ function summarizeForecastOnly(forecast) {
         pointCount: null,
         label: null,
         labelReason: "awaiting-outcome",
+        sessionClass: null,
+        sessionOutcome: null,
         sustainedMinutes: null,
+        canoeSustainedMinutes: null,
+        canoeMeanGustMph: null,
+        canoePeakGustMph: null,
+        canoePctGustAtLeast18: null,
+        flowClassVersion: null,
+        flowClass: null,
+        flowReasons: [],
+        flowEvidence: null,
         gateOpenHour: null,
         maxSpeedMph: null,
         maxGustMph: null,
@@ -262,22 +295,62 @@ export async function loadDashboardData({
     archiveFrom,
     archiveTo,
 } = {}) {
-    const [stationHealth, sodaDays, probabilityModel] = await Promise.all([
+    const [stationHealth, sodaDays, probabilityModel, ...neighborDays] = await Promise.all([
         loadStationHealth(),
         readDays(SODA, { from: archiveFrom, to: archiveTo }),
         loadPredictionModel(),
+        ...SODA_NEIGHBOR_SLUGS.map((slug) =>
+            readDays(slug, { from: archiveFrom, to: archiveTo })
+        ),
     ]);
+    const neighborBySlug = new Map(
+        SODA_NEIGHBOR_SLUGS.map((slug, index) => [
+            slug,
+            new Map(neighborDays[index].map((record) => [record.date, record])),
+        ])
+    );
     const forecasts = await loadForecasts(
         probabilityModel?.modelVersion ?? null,
         { from: archiveFrom, to: archiveTo },
     );
 
-    const labels = sodaDays.map((record) => ({
-        record,
-        label: labelDay(record, { threshold: thresholdMph }),
-    }));
+    const labels = sodaDays.map((record) => {
+        const computedLabel = classifySession(record, { threshold: thresholdMph });
+        const complete = computedLabel.label === null || morningIsComplete(record, computedLabel);
+        const label = complete
+            ? computedLabel
+            : {
+                ...computedLabel,
+                label: null,
+                reason: "awaiting-complete-morning",
+                sessionClass: null,
+                sustainedMinutes: null,
+                canoeSustainedMinutes: null,
+                canoeMeanGustMph: null,
+                canoePeakGustMph: null,
+                canoePctGustAtLeast18: null,
+            };
+        const flow = complete
+            ? classifyFlow(
+                record,
+                SODA_NEIGHBOR_SLUGS.map((slug) => ({
+                    slug,
+                    record: neighborBySlug.get(slug)?.get(record.date),
+                }))
+            )
+            : { flowClassVersion: null, flowClass: null, reasons: [], evidence: null };
+        return { record, label, flow };
+    });
     const usable = labels.filter(({ label }) => label.label !== null);
     const rideable = usable.filter(({ label }) => label.label).length;
+    const canoe = usable.filter(({ label }) => label.sessionClass === "canoe").length;
+    const flat = usable.filter(({ label }) => label.sessionClass === "flat").length;
+    const flowCounts = labels
+        .filter(({ record, flow }) => record.status === "ok" && flow.flowClassVersion)
+        .reduce((counts, { flow }) => {
+            counts[flow.flowClass] = (counts[flow.flowClass] ?? 0) + 1;
+            return counts;
+        }, {});
     const forecastByDate = new Map(forecasts.map((forecast) => [forecast.date, forecast]));
     const outcomeDates = new Set(usable.map(({ record }) => record.date));
     const forecastDates = new Set(forecasts.map((forecast) => forecast.date));
@@ -303,7 +376,7 @@ export async function loadDashboardData({
             const outcome = labelByDate.get(date);
             const forecast = forecastByDate.get(date);
             return outcome
-                ? summarizeMorning(outcome.record, outcome.label, forecast)
+                ? summarizeMorning(outcome.record, outcome.label, forecast, outcome.flow)
                 : summarizeForecastOnly(forecast);
         });
     const sodaHealth = stationHealth.find((station) => station.slug === SODA);
@@ -318,6 +391,9 @@ export async function loadDashboardData({
             latestSodaDate: sodaHealth?.latestDate ?? null,
             usableMornings: usable.length,
             rideableMornings: rideable,
+            gustDrivenMornings: canoe,
+            flatMornings: flat,
+            flowCounts,
             rideableRate: usable.length ? round((rideable / usable.length) * 100) : null,
             forecastDays: forecastDates.size,
             matchedPairs,

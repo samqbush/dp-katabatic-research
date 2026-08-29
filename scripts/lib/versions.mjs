@@ -37,6 +37,10 @@ export const LABEL_VERSION_V1 = 'label-v1';
 // a session class say so here.
 export const SESSION_CLASS_VERSION_V1 = 'session-class-v1';
 
+// Full-morning physical-regime classification. This is an observed outcome that can read
+// post-call data, never a feature or prediction input.
+export const FLOW_CLASS_VERSION_V1 = 'flow-class-v1';
+
 // Pre-refactor live rows (written before this log gained version columns) cannot be assumed to
 // match either v1 or v2 feature math — the live script had its own separately-drifted
 // implementation. Tag them explicitly rather than pretending they are comparable to either.

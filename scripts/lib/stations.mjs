@@ -73,7 +73,11 @@ export const STATIONS = [
   },
 ];
 
+export const SODA_SLUG = 'dp-soda-lakes';
+export const SODA_NEIGHBOR_SLUGS = ['dp-standley-west', 'dp-boulder-res'];
+
 const BY_SLUG = new Map(STATIONS.map((s) => [s.slug, s]));
+const BY_NAME = new Map(STATIONS.map((s) => [s.name, s]));
 
 /** Resolve a station with no network access. Throws on unknown slugs rather than guessing. */
 export function stationBySlug(slug) {
@@ -81,6 +85,17 @@ export function stationBySlug(slug) {
   if (!row) {
     throw new Error(
       `Unknown station "${slug}". Add it to scripts/lib/stations.mjs and re-run apply-schema.`
+    );
+  }
+  return row;
+}
+
+/** Resolve a canonical station slug or exact display name without heuristic slug mangling. */
+export function stationBySlugOrName(value) {
+  const row = BY_SLUG.get(value) ?? BY_NAME.get(value);
+  if (!row) {
+    throw new Error(
+      `Unknown station "${value}". Expected a canonical slug or exact name from scripts/lib/stations.mjs.`
     );
   }
   return row;

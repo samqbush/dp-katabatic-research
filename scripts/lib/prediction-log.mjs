@@ -19,10 +19,11 @@
  * `scripts/migrate-prediction-log.mjs` rather than left blank, so "legacy" is a fact about the
  * row, not an absence of one.
  *
- * The trailing `session_class*` / `canoe_*` columns are an ADDITIVE outcome tier (§ canoe club):
+ * The `session_class*` / `canoe_*` columns are an ADDITIVE outcome tier (§ canoe club):
  * `label` keeps its original 15 mph meaning, and the canoe columns record whether a morning that
- * missed that bar still delivered a 12 mph downwind-board session. They are appended last so
- * every pre-existing row round-trips with them blank — which means "not classified", never "flat".
+ * missed that bar still delivered a 12 mph downwind-board session. Newer gust and flow evidence
+ * remains appended after the original schema so pre-existing rows round-trip blank — which means
+ * "not classified", never "flat".
  */
 
 import { FEATURE_VERSION_V1, RULE_VERSION_V1, LABEL_VERSION_V1, SESSION_CLASS_VERSION_V1 } from './versions.mjs';
@@ -85,6 +86,14 @@ export const LOG_COLUMNS = [
   'canoe_verdict',
   // --- optional, human, never required ---
   'human_note',
+  // --- objective gust support over the best gate-conditioned 12 mph run ---
+  'canoe_mean_gust_mph',
+  'canoe_peak_gust_mph',
+  'canoe_pct_gust_at_least_18',
+  // --- exploratory full-morning mechanism outcome, appended after all existing columns ---
+  'flow_class_version',
+  'flow_class',
+  'flow_evidence',
 ];
 
 function escapeCsv(v) {
@@ -113,6 +122,7 @@ export function buildLogRow({
   features,
   call,
   label,
+  flow = null,
   canoeCall = null,
   humanNote = null,
   featureVersion = FEATURE_VERSION_V1,
@@ -179,6 +189,12 @@ export function buildLogRow({
     // outcome columns above, and blank when no canoe call was made.
     canoe_verdict: canoeCall?.verdict ?? null,
     human_note: humanNote,
+    canoe_mean_gust_mph: round(label?.canoeMeanGustMph),
+    canoe_peak_gust_mph: round(label?.canoePeakGustMph),
+    canoe_pct_gust_at_least_18: round(label?.canoePctGustAtLeast18, 0),
+    flow_class_version: flow?.flowClassVersion ?? null,
+    flow_class: flow?.flowClass ?? null,
+    flow_evidence: flow ? JSON.stringify({ reasons: flow.reasons, ...flow.evidence }) : null,
   };
 }
 

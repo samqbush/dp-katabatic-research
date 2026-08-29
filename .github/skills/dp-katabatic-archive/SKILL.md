@@ -178,6 +178,13 @@ reporting it:
   better on missed sessions and slightly worse on false alarms. Say that plainly instead of
   reporting the NO as if the rule lost.
 
+**Observed outcomes now have two independent axes.** Session quality is `sustained` (the frozen
+15 mph / 30-minute label), `gust-driven/canoe` (the additive 12 mph / 30-minute tier), `flat`, or
+`unknown`. Physical mechanism is exploratory `flow-class-v1`: `katabatic`,
+`transition-hybrid`, `synoptic`, `absent`, or `unknown`. Never substitute one for the other, and
+never report stamped `unknown` as calm or absent. The night-before model still targets only the
+strict sustained label.
+
 **What changed** — new days and new rideable mornings. "No new days" is a perfectly normal
 result: the archive was already current, or it is the winter shutdown.
 

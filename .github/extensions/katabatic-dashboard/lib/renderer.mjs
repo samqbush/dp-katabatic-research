@@ -177,9 +177,16 @@ export function renderDashboardHtml(instanceId) {
         <td>\${phase(day.forecastPhase, day.predictionMode)}</td>
         <td title="\${esc(day.forecastCallReason ?? "No complete forecast")}">\${call(day.forecastCall)}</td>
         <td>\${chance(day.successChancePercent, day.successChanceRaw)}</td>
-        <td>\${value(day.observedMorningMaxSpeedMph, " mph")}</td>
-        <td>\${value(day.observedMorningMaxGustMph, " mph")}</td>
-        <td>\${value(day.observedMorningSustainedMinutes, " min")}</td>
+        <td>\${esc(day.sessionOutcome ?? "—")}</td>
+        <td title="\${esc(day.flowReasons?.join("; ") ?? "")}">\${esc(day.flowClass ?? "—")}</td>
+        <td>\${value(day.sustainedMinutes, " min")}</td>
+        <td>\${value(day.canoeSustainedMinutes, " min")}</td>
+        <td>\${day.canoeSustainedMinutes < 30 ||
+          day.canoeMeanGustMph === null || day.canoeMeanGustMph === undefined
+          ? "—"
+          : value(day.canoeMeanGustMph, " mph avg") + " / " +
+            value(day.canoePeakGustMph, " mph peak") + " / " +
+            value(day.canoePctGustAtLeast18, "% ≥18")}</td>
         <td>\${value(day.avgForecastWindMph, " mph")}</td>
         <td>\${value(day.avgLidM, " m")}</td>
       </tr>\`).join("");
@@ -199,7 +206,7 @@ export function renderDashboardHtml(instanceId) {
         <div class="card"><div class="eyebrow muted">Held-out pairs</div><div class="metric">\${fmt.format(s.heldOutPairs)}</div><div class="muted">new since \${data.research.forwardHoldoutStart}</div></div>
         <div class="card"><div class="eyebrow muted">Historical backfill</div><div class="metric">\${fmt.format(s.historicalBackfillPairs)}</div><div class="muted">already used to develop/test the rule</div></div>
         <div class="card"><div class="eyebrow muted">Held-out missed sessions</div><div class="metric">\${fmt.format(s.heldOutMisses)} / \${fmt.format(s.heldOutRideable)}</div><div class="muted">SLEEP IN on a rideable morning</div></div>
-        <div class="card"><div class="eyebrow muted">Usable mornings</div><div class="metric">\${fmt.format(s.usableMornings)}</div><div class="muted">\${fmt.format(s.rideableMornings)} rideable</div></div>
+        <div class="card"><div class="eyebrow muted">Usable mornings</div><div class="metric">\${fmt.format(s.usableMornings)}</div><div class="muted">\${fmt.format(s.rideableMornings)} sustained · \${fmt.format(s.gustDrivenMornings)} gust-driven/canoe</div></div>
         <div class="card"><div class="eyebrow muted">Latest Soda day</div><div class="metric">\${s.latestSodaDate ?? "—"}</div><div class="muted">\${fmt.format(s.forecastDays)} archived forecast days</div></div>
       </section>
       <div class="grid">
@@ -212,8 +219,8 @@ export function renderDashboardHtml(instanceId) {
           <h2>Recent Soda mornings</h2>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Date</th><th>Sample</th><th>Experimental call</th><th>Chance</th><th>Max wind</th><th>Max gust</th><th>Minutes ≥\${esc(data.parameters.thresholdMph)} mph</th><th>Avg HRRR wind</th><th>Avg lid</th></tr></thead>
-              <tbody>\${rows || '<tr><td colspan="9">No archived mornings.</td></tr>'}</tbody>
+              <thead><tr><th>Date</th><th>Sample</th><th>Experimental call</th><th>Chance</th><th>Session outcome</th><th>Flow mechanism</th><th>Minutes ≥\${esc(data.parameters.thresholdMph)}</th><th>Minutes ≥12</th><th>Gust support</th><th>Avg HRRR wind</th><th>Avg lid</th></tr></thead>
+              <tbody>\${rows || '<tr><td colspan="11">No archived mornings.</td></tr>'}</tbody>
             </table>
           </div>
           <div class="muted" style="margin-top:12px">
@@ -221,9 +228,10 @@ export function renderDashboardHtml(instanceId) {
             the exact 00Z run available the evening before. “Chance” means
             \${esc(data.research.probabilityModel?.target ?? "the current rideable outcome")};
             it is not yet a calibrated product probability.
-            Observed max wind and gust cover Colorado-local midnight through sunrise +3 hours and
-            do not change with the slider. Minutes at or above the selected threshold is the longest
-            continuous run; data gaps break a run. An em dash means unavailable or too coarse, not calm.
+            Session outcome and both minutes columns are gate-conditioned through sunrise +3 hours.
+            “Sustained” retains the strict selected-threshold target; “gust-driven/canoe” is the
+            additive 12 mph tier. Flow mechanism is a separate exploratory full-morning outcome.
+            Data gaps break a run. An em dash means unavailable or too coarse, not calm.
             \${fmt.format(s.storedPredictionDays)} forecast days have stored predictions;
             \${fmt.format(s.forecastsWithoutPrediction)} do not. \${fmt.format(s.matchedPairs)}
             total matched pairs; \${fmt.format(s.outcomesWithoutForecast)} usable outcomes lack

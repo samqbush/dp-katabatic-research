@@ -286,11 +286,24 @@ export function classifySession(
       canoeThreshold,
       canoeSustainedMinutes: null,
       canoePreGateSustainedMinutes: null,
+      canoeMeanGustMph: null,
+      canoePeakGustMph: null,
+      canoePctGustAtLeast18: null,
       canoeMissedDueToGate: null,
     };
   }
 
   const canoe = labelDay(dayRecord, { threshold: canoeThreshold, minSustainedMin });
+  const canoeWindowPoints =
+    canoe.windowStartTs === null || canoe.windowStartTs === undefined ||
+    canoe.windowEndTs === null || canoe.windowEndTs === undefined
+      ? []
+      : dayRecord.points.filter(
+        (point) => point.ts >= canoe.windowStartTs && point.ts < canoe.windowEndTs
+      );
+  const canoeGusts = canoeWindowPoints
+    .map((point) => Number(point.gust))
+    .filter(Number.isFinite);
 
   return {
     ...rideable,
@@ -298,6 +311,13 @@ export function classifySession(
     canoeThreshold,
     canoeSustainedMinutes: canoe.sustainedMinutes ?? null,
     canoePreGateSustainedMinutes: canoe.preGateSustainedMinutes ?? null,
+    canoeMeanGustMph: canoeGusts.length
+      ? canoeGusts.reduce((sum, gust) => sum + gust, 0) / canoeGusts.length
+      : null,
+    canoePeakGustMph: canoeGusts.length ? Math.max(...canoeGusts) : null,
+    canoePctGustAtLeast18: canoeGusts.length
+      ? (canoeGusts.filter((gust) => gust >= 18).length / canoeGusts.length) * 100
+      : null,
     // Same gate trap as the primary label: a morning that ran 12+ only before the gate opened is
     // not a canoe session, it is an unreachable one.
     canoeMissedDueToGate: canoe.missedDueToGate ?? null,

@@ -64,6 +64,23 @@ describe('classifySession — canoe tier', () => {
     expect(res.canoeSustainedMinutes).toBeLessThan(30);
   });
 
+  it('classifies an August-28-shaped broken 15 mph event as gust-driven/canoe', () => {
+    const day = makeMorning('2026-08-28', [
+      { fromMin: 7 * 60 + 5, toMin: 7 * 60 + 15, speed: 14 },
+      { fromMin: 7 * 60 + 15, toMin: 7 * 60 + 30, speed: 16 },
+      { fromMin: 7 * 60 + 30, toMin: 7 * 60 + 45, speed: 14 },
+      { fromMin: 7 * 60 + 45, toMin: 8 * 60 + 5, speed: 16 },
+    ]);
+    const result = classifySession(day);
+
+    expect(result.label).toBe(false);
+    expect(result.sustainedMinutes).toBe(20);
+    expect(result.sessionClass).toBe('canoe');
+    expect(result.canoeSustainedMinutes).toBe(60);
+    expect(result.canoeMeanGustMph).toBeGreaterThanOrEqual(18);
+    expect(result.canoePctGustAtLeast18).toBe(100);
+  });
+
   it('gate-conditions the canoe run: 12+ before the gate does not count', () => {
     // 04:00-05:30 is a real canoe-strength event, but July's gate does not open until 06:00.
     const res = classifySession(

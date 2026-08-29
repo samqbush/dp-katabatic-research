@@ -2359,9 +2359,10 @@ Two things worth flagging for anyone reading a live meter mid-morning:
 **Does not change:** any rule version, any threshold, any labelling. No promotion is claimed.
 
 **Does change:** the live skill (`.github/skills/dp-katabatic-check/SKILL.md`) now carries a
-"post-sunrise second pulse" section instructing the agent never to advise waiting for the late
-window at 15 mph, and to treat it as a ~2%-of-mornings possibility at 12 mph only for a rider
-already at the lake.
+"post-sunrise second pulse" section instructing the agent never to advise waiting for a strict
+sustained late window at 15 mph, and to treat a 12 mph gust-driven/canoe outcome as a
+~2%-of-mornings possibility only for a rider already at the lake. The strict zero does not mean
+the later wind can never support useful gust-driven riding.
 
 **Caveats.** 111 mornings is a modest sample for a ~1% pattern, the windows are post-hoc, and the
 analysis is May–Sep only (the 6:00-gate season). The 15 mph zero is a genuine zero *in this
@@ -2451,8 +2452,9 @@ Inherited rather than reimplemented:
   never `'flat'`. A canoe session is exactly the modest event a fabricated negative would erase.
 
 Log columns `session_class_version`, `session_class`, `canoe_threshold_mph`,
-`canoe_sustained_minutes`, `canoe_verdict` are **appended last**, so every pre-existing row
-round-trips with them blank — meaning "not classified", never "flat". Guard rails in
+`canoe_sustained_minutes`, `canoe_verdict` were appended after the original schema, so every
+pre-existing row round-trips with them blank — meaning "not classified", never "flat". Later
+gust and flow fields follow the same additive rule. Guard rails in
 `__tests__/utils/sessionClass.test.js`, including a regression test asserting `classifySession`
 and `labelDay` return identical primary labels.
 
@@ -2518,3 +2520,119 @@ before anything changes.
 Also unchanged: the `MARGINAL / BUILDING` fingerprint remains a poor bet at 15 mph — 21 archived
 mornings at 05:45, 2 rideable (9.5%). A late build seen at 05:45 is a trap at the 15 mph bar. Its
 value, as §16.6 shows, is at the canoe bar instead.
+
+## 17. Orthogonal outcome taxonomy (preregistered 2026-08-29)
+
+### 17.1 Why "session" is not one variable
+
+2026-08-28 exposed a vocabulary failure rather than a meter failure. The morning did not satisfy
+`label-v1`: its longest continuous run at or above 15 mph was 20 minutes. It did satisfy the
+12 mph canoe tier for 35 continuous minutes, with gusts reaching 23.3 mph, and riders described a
+good session. Calling that simply `false` preserves the strict experiment but erases practical
+rideability; calling it a normal 15 mph session silently broadens the experiment after seeing the
+outcome.
+
+The correction is two independent observed axes:
+
+| Axis | Frozen values | Question answered |
+|---|---|---|
+| Session outcome | `sustained`, `gust-driven/canoe`, `flat`, `unknown` | What kind of riding did the meter support after the gate opened? |
+| Flow mechanism | `katabatic`, `transition-hybrid`, `synoptic`, `absent`, `unknown` | What physical wind regime best explains the complete morning trace? |
+
+`label-v1` remains unchanged and remains the target of every existing night-before model and
+same-morning backtest. `sustained` is only display language for its existing positive result.
+`gust-driven/canoe` is only display language for the existing additive `session-class-v1`
+`canoe` result: not `label-v1`, but at least 12 mph for 30 continuous post-gate minutes. No gust
+threshold is added; §16.3 already measured it as redundant. Gust metrics are evidence describing
+the class, not a condition defining it.
+
+### 17.2 `flow-class-v1` preregistration
+
+> ⚠️ **EXPLORATORY OUTCOME, NOT A PREDICTOR.** This classification reads the completed morning,
+> including post-call observations. It must never enter `computeFeatures`, `call-rule-v*`, the
+> night-before model, or an issued prediction. Its purpose is stratification after the fact.
+
+The classifier is deliberately conservative. A wrong physical story is worse than `unknown`.
+
+**Required evidence**
+
+- Soda must be `ok` at 5-minute resolution. Coarser data cannot resolve a collapse and restart.
+- Both configured surface neighbours, Standley West and Boulder Res, must be `ok` at 30-minute
+  resolution or finer over the physical morning. A missing neighbour makes regional attribution
+  ambiguous.
+- All timestamps and windows are Colorado-local and DST-safe.
+- The physical morning ends at sunrise +180 minutes, matching `labelDay`.
+- Structure checkpoints are evaluated every 15 minutes from 00:30 through sunrise with the frozen
+  v5 feature and structure functions. `PRESENT`, `POSSIBLE`, and `ABSENT` retain their existing
+  meanings.
+- An organized W/NW pulse is at least 30 continuous minutes at or above 12 mph with at least 80%
+  of its readings inside Soda's 270°–330° drainage window. A data gap breaks a pulse.
+- A collapse is at least 30 continuous minutes below 12 mph. A data gap does not prove calm and
+  therefore cannot prove a collapse.
+- Local contrast means both neighbours' concurrent 30-minute averages are below half Soda's
+  30-minute average. Regional concurrency means both are at least 90% of Soda's average and Soda
+  itself is at or above 12 mph.
+
+**Tie-break order**
+
+1. `unknown` — any required record is absent, unobserved, stale across the relevant window, or too
+   coarse.
+2. `transition-hybrid` — a pre-sunrise `PRESENT` structure or organized W/NW pulse is followed by
+   a qualifying collapse, then by a second organized W/NW pulse that overlaps the post-gate
+   window. This names an observed two-pulse transition; it does not claim the second pulse is
+   katabatic.
+3. `katabatic` — at least one pre-sunrise `PRESENT` checkpoint has local contrast, and the
+   two-pulse rule above did not fire.
+4. `synoptic` — an organized Soda pulse has regional concurrency and no checkpoint establishes
+   local contrast.
+5. `absent` — adequate data exists, every pre-sunrise checkpoint is `ABSENT`, and no organized
+   W/NW pulse exists.
+6. `unknown` — every remaining mixture, including only `POSSIBLE` structure, conflicting local
+   and regional evidence, or a pulse whose mechanism cannot be separated.
+
+These literals, thresholds, windows, and precedence define `flow-class-v1`. Any later correction
+requires `flow-class-v2`; historical v1 values are never silently rewritten under the same name.
+
+### 17.3 Reporting contract
+
+Every report must keep the axes separate. A valid combined description is
+`transition-hybrid · gust-driven/canoe`; neither half substitutes for the other. Discussion and
+dashboard outcome minutes are gate-conditioned. Physical-morning maxima may still be shown, but
+must be named as midnight-through-sunrise+3h observations rather than session-window evidence.
+
+Blank flow fields mean the row predates this classifier. A stamped `unknown` means the classifier
+ran and could not attribute the mechanism. `absent` is affirmative evidence, never a fallback for
+missing data.
+
+### 17.4 First backfill (2026-08-29)
+
+The additive session outcome now covers 340 labelable mornings:
+
+| Session outcome | Mornings | Share |
+|---|---:|---:|
+| sustained (`label-v1`) | 99 | 29.1% |
+| **gust-driven/canoe** | **67** | **19.7%** |
+| flat | 174 | 51.2% |
+
+The physical mechanism has a much smaller honest denominator. Of 336 mornings with a 05:45 v5
+backtest row, 302 are `unknown`, primarily because `flow-class-v1` requires 5-minute Soda data and
+both surface neighbours; Boulder Res only begins late in the archive. The 34 affirmative
+classifications are:
+
+| Flow mechanism | sustained | gust-driven/canoe | flat | Total |
+|---|---:|---:|---:|---:|
+| katabatic | 9 | 8 | 10 | 27 |
+| transition-hybrid | 1 | 6 | 0 | 7 |
+| synoptic | 0 | 0 | 0 | 0 |
+| absent | 0 | 0 | 0 | 0 |
+
+Zero here means the strict v1 evidence did not affirm that class; it is not proof the regime never
+occurs. The high `unknown` count is a deliberate result of refusing to infer regional mechanism
+without complete neighbours.
+
+**2026-08-28 classifies `transition-hybrid · gust-driven/canoe`.** The strict outcome remains
+false (20 continuous minutes ≥15). The lower tier is true (35 continuous minutes ≥12), with
+20.8 mph mean gust, 22.1 mph peak gust, and every reading in that best run gusting at least
+18 mph. The flow classifier found organized pre-sunrise drainage, a 35-minute sub-12 collapse,
+and a later organized W/NW pulse. This is the exact distinction the two-axis taxonomy exists to
+preserve.

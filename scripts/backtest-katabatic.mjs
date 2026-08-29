@@ -24,16 +24,17 @@ import { computeFeaturesV3, callRuleV3, FEATURE_VERSION as FEATURE_VERSION_V3, R
 import { computeFeaturesV4, callRuleV4, FEATURE_VERSION as FEATURE_VERSION_V4, RULE_VERSION as RULE_VERSION_V4 } from './lib/call-rule-v4.mjs';
 import { computeFeaturesV5, callRuleV5, FEATURE_VERSION as FEATURE_VERSION_V5, RULE_VERSION as RULE_VERSION_V5 } from './lib/call-rule-v5.mjs';
 import { classifySession, parseArchiveDate, DEFAULT_THRESHOLD_MPH } from './lib/label.mjs';
+import { classifyFlow } from './lib/flow-class.mjs';
 import { calcSunrise } from './lib/sunrise.mjs';
 import { buildLogRow } from './lib/prediction-log.mjs';
 import { readAllRows, upsertRows } from './lib/prediction-log-store.mjs';
 import { zonedTimeFrom } from './lib/zone.mjs';
 import { readDays, storeConfigSummary, closePool } from './lib/archive-store.mjs';
+import { SODA_NEIGHBOR_SLUGS, SODA_SLUG } from './lib/stations.mjs';
 
 const DEFAULT_OUT = join(REPO_ROOT, 'research', 'prediction-log.csv');
 
-const TARGET_SLUG = 'dp-soda-lakes';
-const NEIGHBOR_SLUGS = ['dp-standley-west', 'dp-boulder-res'];
+const TARGET_SLUG = SODA_SLUG;
 
 // The window a dawn patrol decision actually gets made in.
 const CALL_START_MIN = 5 * 60;
@@ -74,7 +75,7 @@ async function main() {
   }
 
   const neighbors = [];
-  for (const slug of NEIGHBOR_SLUGS) neighbors.push(await loadStation(slug));
+  for (const slug of SODA_NEIGHBOR_SLUGS) neighbors.push(await loadStation(slug));
 
   const rows = [];
   const dayLabels = [];
@@ -101,6 +102,13 @@ async function main() {
       .map((n) => n.get(date))
       .filter((r) => r && r.status === 'ok' && r.points?.length)
       .map((r) => r.points);
+    const flow = classifyFlow(
+      rec,
+      SODA_NEIGHBOR_SLUGS.map((slug, index) => ({
+        slug,
+        record: neighbors[index].get(date),
+      })),
+    );
 
     for (let m = CALL_START_MIN; m <= CALL_END_MIN; m += CALL_STEP_MIN) {
       // Station-local, not machine-local — a 06:30 call means 06:30 in Colorado (see zone.mjs).
@@ -126,6 +134,7 @@ async function main() {
             features: featuresV1,
             call: callV1,
             label,
+            flow,
             featureVersion: FEATURE_VERSION_V1,
             ruleVersion: RULE_VERSION_V1,
           })
@@ -152,6 +161,7 @@ async function main() {
             features: featuresV2,
             call: callV2,
             label,
+            flow,
             featureVersion: FEATURE_VERSION_V2,
             ruleVersion: RULE_VERSION_V2,
           })
@@ -177,6 +187,7 @@ async function main() {
             features: featuresV3,
             call: callV3,
             label,
+            flow,
             featureVersion: FEATURE_VERSION_V3,
             ruleVersion: RULE_VERSION_V3,
           })
@@ -203,6 +214,7 @@ async function main() {
             features: featuresV4,
             call: callV4,
             label,
+            flow,
             featureVersion: FEATURE_VERSION_V4,
             ruleVersion: RULE_VERSION_V4,
           })
@@ -228,6 +240,7 @@ async function main() {
             features: featuresV5,
             call: callV5,
             label,
+            flow,
             featureVersion: FEATURE_VERSION_V5,
             ruleVersion: RULE_VERSION_V5,
           })
@@ -250,7 +263,15 @@ async function main() {
   if (preservedCount) console.log(`Preserved ${preservedCount} non-backtest row(s) (live/retrospective) from previous runs.`);
 
   const positives = dayLabels.filter((l) => l.label).length;
+  const canoe = dayLabels.filter((l) => l.sessionClass === 'canoe').length;
+  const flat = dayLabels.filter((l) => l.sessionClass === 'flat').length;
   const missedByGate = dayLabels.filter((l) => l.missedDueToGate).length;
+  const flowCounts = rows
+    .filter((row) => row.rule_version === RULE_VERSION_V5 && row.call_time === '05:00')
+    .reduce((counts, row) => {
+      counts[row.flow_class] = (counts[row.flow_class] ?? 0) + 1;
+      return counts;
+    }, {});
 
   console.log('='.repeat(72));
   console.log(`BACKTEST — DP Soda Lakes, threshold ${args.threshold} mph`);
@@ -258,6 +279,8 @@ async function main() {
   console.log(`Scored days:        ${dayLabels.length}`);
   console.log(`Excluded (unobserved, never counted as calm): ${unobserved}`);
   console.log(`Rideable mornings:  ${positives} (${((positives / dayLabels.length) * 100).toFixed(1)}% base rate, gate-conditioned)`);
+  console.log(`Gust-driven/canoe: ${canoe}; flat: ${flat}`);
+  console.log(`Flow classes:      ${JSON.stringify(flowCounts)}`);
   console.log(`Blew well but before the gate opened: ${missedByGate}`);
   console.log(`Rows written (v1+v2+v3+v4+v5 paired): ${rows.length} → ${args.out} (${result.total} total rows in file)`);
   console.log(`\nNext: node scripts/score-backtest.mjs --rule-version call-rule-v1`);
