@@ -165,19 +165,31 @@ async function archiveDay(device, date, { force = false, dryRun = false, archive
 
   let points;
   let cycleType;
+  let pressure;
   try {
-    ({ points, cycleType } = await getHistory(device.mac, start, end, {
+    ({ points, cycleType, pressure } = await getHistory(device.mac, start, end, {
       onRateLimit: (ms) => console.log(`   ⏳ rate limited — cooling down ${Math.round(ms / 1000)}s (${isoDay(date)})`),
     }));
   } catch (err) {
     return { day: isoDay(date), status: 'error', message: err.message, rateLimited: !!err.rateLimited };
   }
 
+  if (pressure.unmatchedCount > 0 || (pressure.matchedCount === 0 && pressure.absoluteCount + pressure.relativeCount > 0)) {
+    console.warn(
+      `   ⚠ ${device.name} ${isoDay(date)}: pressure timestamps did not fully align with wind ` +
+        `(matched=${pressure.matchedCount}, unmatched=${pressure.unmatchedCount})`
+    );
+  }
+
+  const fetchedAt = new Date().toISOString();
   const base = {
     station: device.name,
     mac: device.mac,
     date: isoDay(date),
-    fetched_at: new Date().toISOString(),
+    fetched_at: fetchedAt,
+    pressure_fetched_at: fetchedAt,
+    pressure_cycle_type: pressure.cycleType,
+    pressure_provenance: 'co-captured',
   };
 
   const record = points.length
@@ -199,6 +211,7 @@ async function archiveDay(device, date, { force = false, dryRun = false, archive
     reason: record.reason,
     points: points.length,
     cycleType,
+    pressure,
     writeFailure,
   };
 }

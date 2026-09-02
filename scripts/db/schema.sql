@@ -17,6 +17,7 @@
 --   cycle_type   877/877  free text, nullable -> see note below
 --   point_count  877/877  integer             -> recomputed from observations
 --   points       877/877  array               -> observations rows
+--   pressure_*            Ecowitt only        -> independent pressure capture provenance
 --   mac          868/877  Ecowitt only        -> stations.ecowitt_mac
 --   reason        59/877  seasonal-shutdown | unexplained  (null when status=ok)
 --   holfuy_id      9/877  Holfuy only         -> stations.holfuy_id
@@ -35,6 +36,8 @@
 --   dir    87826  degrees, integer, 0 .. 360
 --   temp   87825  degF, <=1 decimal, -5.8 .. 100.9   (1 null observed)
 --   rh     87825  percent, <=1 decimal, 3 .. 99      (1 null observed)
+--   absolute_pressure_hpa  Ecowitt only, nullable, raw station pressure
+--   relative_pressure_hpa  Ecowitt only, nullable, raw sea-level-adjusted pressure
 --   solar   6214  W/m2, integer, 0 .. 1087
 --            ^ HOLFUY ONLY. Absent from all 81612 Ecowitt points. Absent and
 --              null are DIFFERENT here and must not be conflated on read.
@@ -83,6 +86,11 @@ CREATE TABLE IF NOT EXISTS station_days (
   cycle_type    text,
   point_count   integer NOT NULL DEFAULT 0 CHECK (point_count >= 0),
   fetched_at    timestamptz NOT NULL,
+  pressure_fetched_at  timestamptz,
+  pressure_cycle_type  text,
+  pressure_point_count integer CHECK (pressure_point_count >= 0),
+  pressure_status      text,
+  pressure_provenance  text,
   PRIMARY KEY (station_slug, local_date),
   -- A non-ok day is an honest record of absence and must never carry points.
   -- This is the constraint that stops a winter shutdown being written as calm.
@@ -99,9 +107,23 @@ CREATE TABLE IF NOT EXISTS observations (
   dir           integer      NOT NULL,
   temp          numeric(4,1),
   rh            numeric(4,1),
+  absolute_pressure_hpa numeric(5,1),
+  relative_pressure_hpa numeric(5,1),
   solar         integer,
   PRIMARY KEY (station_slug, ts)
 );
+
+-- Additive migrations for databases created before pressure collection.
+ALTER TABLE station_days
+  ADD COLUMN IF NOT EXISTS pressure_fetched_at timestamptz,
+  ADD COLUMN IF NOT EXISTS pressure_cycle_type text,
+  ADD COLUMN IF NOT EXISTS pressure_point_count integer,
+  ADD COLUMN IF NOT EXISTS pressure_status text,
+  ADD COLUMN IF NOT EXISTS pressure_provenance text;
+
+ALTER TABLE observations
+  ADD COLUMN IF NOT EXISTS absolute_pressure_hpa numeric(5,1),
+  ADD COLUMN IF NOT EXISTS relative_pressure_hpa numeric(5,1);
 
 -- The archive is almost always queried as "this station, this local day" or as
 -- a date range, so index the Denver-local date expression the consumers use.

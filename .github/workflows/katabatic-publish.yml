@@ -43,6 +43,8 @@ jobs:
         env:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL_RO || secrets.NEON_DATABASE_URL }}
           ECOWITT_MAC_DP_SODA_LAKES: ${{ secrets.ECOWITT_MAC_DP_SODA_LAKES }}
+          ECOWITT_MAC_DP_STANDLEY_WEST: ${{ secrets.ECOWITT_MAC_DP_STANDLEY_WEST }}
+          ECOWITT_MAC_DP_BOULDER_RES: ${{ secrets.ECOWITT_MAC_DP_BOULDER_RES }}
           KATABATIC_DISCUSSION_NUMBER: ${{ vars.KATABATIC_DISCUSSION_NUMBER }}
           GITHUB_TOKEN: ${{ secrets.KATABATIC_DISCUSSIONS_TOKEN || secrets.GITHUB_TOKEN }}
         run: npm run publish:discussion

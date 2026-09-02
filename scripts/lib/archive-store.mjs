@@ -165,7 +165,16 @@ function buildRecord(stationRow, dayRow, points) {
   const rec = {
     station: stationRow.name,
     ...(stationRow.source === 'ecowitt'
-      ? { mac: requireEcowittMac(stationRow.slug) }
+      ? {
+          mac: requireEcowittMac(stationRow.slug),
+          pressure_fetched_at: dayRow.pressure_fetched_at
+            ? new Date(dayRow.pressure_fetched_at).toISOString()
+            : null,
+          pressure_cycle_type: dayRow.pressure_cycle_type,
+          pressure_point_count: dayRow.pressure_point_count,
+          pressure_status: dayRow.pressure_status,
+          pressure_provenance: dayRow.pressure_provenance,
+        }
       : {
           holfuy_id: stationRow.holfuy_id,
           slug: stationRow.slug,
@@ -183,7 +192,7 @@ function buildRecord(stationRow, dayRow, points) {
   return rec;
 }
 
-/** `solar` is Holfuy-only; absent and null are different and must not be conflated. */
+/** Pressure is Ecowitt-only and solar is Holfuy-only; absent and null are distinct. */
 function buildPoint(row, source) {
   const p = {
     ts: Math.floor(new Date(row.ts).getTime() / 1000),
@@ -193,7 +202,12 @@ function buildPoint(row, source) {
     temp: row.temp,
     rh: row.rh,
   };
-  if (source === 'holfuy') p.solar = row.solar;
+  if (source === 'ecowitt') {
+    p.absolute_pressure_hpa = row.absolute_pressure_hpa;
+    p.relative_pressure_hpa = row.relative_pressure_hpa;
+  } else {
+    p.solar = row.solar;
+  }
   return p;
 }
 
@@ -274,9 +288,10 @@ async function insertObservations(client, stationRow, date, points, { onConflict
   const values = [];
   const params = [];
   points.forEach((p, i) => {
-    const b = i * 8;
+    const b = i * 10;
     values.push(
-      `($${b + 1}, to_timestamp($${b + 2}), $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8})`
+      `($${b + 1}, to_timestamp($${b + 2}), $${b + 3}, $${b + 4}, $${b + 5},
+        $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10})`
     );
     params.push(
       stationRow.slug,
@@ -286,6 +301,8 @@ async function insertObservations(client, stationRow, date, points, { onConflict
       p.dir,
       p.temp ?? null,
       p.rh ?? null,
+      p.absolute_pressure_hpa ?? null,
+      p.relative_pressure_hpa ?? null,
       p.solar ?? null
     );
   });
@@ -294,11 +311,16 @@ async function insertObservations(client, stationRow, date, points, { onConflict
     onConflict === 'replace'
       ? `ON CONFLICT (station_slug, ts) DO UPDATE SET
            speed = EXCLUDED.speed, gust = EXCLUDED.gust, dir = EXCLUDED.dir,
-           temp = EXCLUDED.temp, rh = EXCLUDED.rh, solar = EXCLUDED.solar`
+        temp = EXCLUDED.temp, rh = EXCLUDED.rh,
+        absolute_pressure_hpa = EXCLUDED.absolute_pressure_hpa,
+        relative_pressure_hpa = EXCLUDED.relative_pressure_hpa,
+        solar = EXCLUDED.solar`
       : 'ON CONFLICT (station_slug, ts) DO NOTHING';
 
   const res = await client.query(
-    `INSERT INTO observations (station_slug, ts, speed, gust, dir, temp, rh, solar)
+    `INSERT INTO observations
+       (station_slug, ts, speed, gust, dir, temp, rh,
+        absolute_pressure_hpa, relative_pressure_hpa, solar)
      VALUES ${values.join(', ')} ${conflict}`,
     params
   );
@@ -325,6 +347,80 @@ async function upsertDayRow(client, stationRow, record, pointCount) {
   );
 }
 
+const PRESSURE_PROVENANCE = new Set(['co-captured', 'retrospective']);
+
+async function updatePressureDayMetadata(
+  client,
+  stationRow,
+  date,
+  { fetchedAt, cycleType, provenance }
+) {
+  if (stationRow.source !== 'ecowitt') {
+    throw new Error(`Pressure metadata is Ecowitt-only; ${stationRow.slug} is ${stationRow.source}.`);
+  }
+  if (!PRESSURE_PROVENANCE.has(provenance)) {
+    throw new Error(`Invalid pressure provenance "${provenance}".`);
+  }
+
+  const { rows: dayRows } = await client.query(
+    `SELECT pressure_provenance
+       FROM station_days
+      WHERE station_slug = $1 AND local_date = $2
+      FOR UPDATE`,
+    [stationRow.slug, isoDay(date)]
+  );
+  if (!dayRows.length) {
+    throw new Error(`${stationRow.slug} ${isoDay(date)}: station day is missing during pressure metadata update.`);
+  }
+  if (provenance === 'retrospective' && dayRows[0].pressure_provenance === 'co-captured') {
+    throw new Error(
+      `${stationRow.slug} ${isoDay(date)}: refusing to relabel co-captured pressure as retrospective.`
+    );
+  }
+
+  const { startSec, endSec } = dayBoundsEpoch(date);
+  const { rows } = await client.query(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (
+         WHERE absolute_pressure_hpa IS NOT NULL OR relative_pressure_hpa IS NOT NULL
+       )::int AS pressure_count,
+       COUNT(*) FILTER (
+         WHERE absolute_pressure_hpa IS NOT NULL AND relative_pressure_hpa IS NOT NULL
+       )::int AS complete_count
+     FROM observations
+     WHERE station_slug = $1 AND ts >= to_timestamp($2) AND ts < to_timestamp($3)`,
+    [stationRow.slug, startSec, endSec]
+  );
+  const { total, pressure_count: pressureCount, complete_count: completeCount } = rows[0];
+  const status = pressureCount === 0
+    ? 'no-data'
+    : completeCount === total
+      ? 'ok'
+      : 'partial';
+
+  const res = await client.query(
+    `UPDATE station_days
+        SET pressure_fetched_at = $3,
+            pressure_cycle_type = $4,
+            pressure_point_count = $5,
+            pressure_status = $6,
+            pressure_provenance = $7
+      WHERE station_slug = $1 AND local_date = $2`,
+    [
+      stationRow.slug,
+      isoDay(date),
+      fetchedAt,
+      cycleType ?? null,
+      pressureCount,
+      status,
+      provenance,
+    ]
+  );
+  if (res.rowCount !== 1) throw new Error(`${stationRow.slug} ${isoDay(date)}: pressure metadata update failed.`);
+  return { total, pressureCount, completeCount, status };
+}
+
 /** point_count is recomputed from actual rows, never trusted from the caller. */
 async function countObservations(client, stationRow, date) {
   const { startSec, endSec } = dayBoundsEpoch(date);
@@ -349,7 +445,14 @@ async function replaceDayNeon(stationRow, record) {
     });
     const n = await countObservations(client, stationRow, record.date);
     await upsertDayRow(client, stationRow, record, n);
-    return { pointCount: n };
+    const pressure = stationRow.source === 'ecowitt' && record.pressure_fetched_at
+      ? await updatePressureDayMetadata(client, stationRow, record.date, {
+          fetchedAt: record.pressure_fetched_at,
+          cycleType: record.pressure_cycle_type,
+          provenance: record.pressure_provenance,
+        })
+      : null;
+    return { pointCount: n, pressure };
   });
 }
 
@@ -448,6 +551,130 @@ export async function replaceDay(slug, record) {
 export async function mergeDay(slug, record) {
   const stationRow = await getStation(slug);
   return writeDay(stationRow, record, mergeDayNeon);
+}
+
+/**
+ * Days eligible for a retrospective Ecowitt pressure fill.
+ *
+ * Newest-first protects the still-fine part of Ecowitt's decaying history before old coarse days.
+ */
+export async function listPressureBackfillDays(slug, { from, to, force = false } = {}) {
+  const stationRow = await getStation(slug);
+  if (stationRow.source !== 'ecowitt') {
+    throw new Error(`Pressure backfill is Ecowitt-only; ${slug} is ${stationRow.source}.`);
+  }
+
+  const clauses = [`station_slug = $1`, `status = 'ok'`];
+  const params = [stationRow.slug];
+  if (from) clauses.push(`local_date >= $${params.push(from)}`);
+  if (to) clauses.push(`local_date <= $${params.push(to)}`);
+  if (force) {
+    clauses.push(`pressure_provenance IS DISTINCT FROM 'co-captured'`);
+  } else {
+    clauses.push('pressure_fetched_at IS NULL');
+  }
+
+  const { rows } = await query(
+    `SELECT local_date
+       FROM station_days
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY local_date DESC`,
+    params
+  );
+  return rows.map((r) => isoDay(r.local_date));
+}
+
+/**
+ * Fill missing pressure values on existing observations without changing any original reading.
+ *
+ * The UPDATE is column-level fill-only, so a retry cannot replace already-captured pressure with a
+ * changed or coarser value. Pressure timestamps without an existing wind observation are counted
+ * but never inserted because the observation contract requires wind.
+ */
+export async function enrichObservationPressure(
+  slug,
+  date,
+  points,
+  { fetchedAt, cycleType, provenance = 'retrospective' }
+) {
+  const stationRow = await getStation(slug);
+  if (stationRow.source !== 'ecowitt') {
+    throw new Error(`Pressure enrichment is Ecowitt-only; ${slug} is ${stationRow.source}.`);
+  }
+
+  const day = isoDay(date);
+  const { startSec, endSec } = dayBoundsEpoch(day);
+  const incoming = points.filter(
+    (p) => Number.isFinite(p.absolute_pressure_hpa) || Number.isFinite(p.relative_pressure_hpa)
+  );
+  for (const p of incoming) {
+    if (!Number.isFinite(p.ts) || p.ts < startSec || p.ts >= endSec) {
+      throw new Error(
+        `${stationRow.slug} ${day}: pressure ts=${p.ts} falls outside the station-local day ` +
+          `[${startSec}, ${endSec}).`
+      );
+    }
+  }
+
+  return withTransaction(async (client) => {
+    let matched = 0;
+    let updated = 0;
+
+    if (incoming.length) {
+      const params = [];
+      const values = incoming.map((p, i) => {
+        const b = i * 3;
+        params.push(p.ts, p.absolute_pressure_hpa ?? null, p.relative_pressure_hpa ?? null);
+        return `(to_timestamp($${b + 1}), $${b + 2}::numeric, $${b + 3}::numeric)`;
+      });
+      const stationParam = params.push(stationRow.slug);
+      const incomingCte =
+        `WITH incoming(ts, absolute_pressure_hpa, relative_pressure_hpa) AS ` +
+        `(VALUES ${values.join(', ')})`;
+
+      const matchRes = await client.query(
+        `${incomingCte}
+         SELECT COUNT(*)::int AS n
+           FROM observations o
+           JOIN incoming i ON o.ts = i.ts
+          WHERE o.station_slug = $${stationParam}`,
+        params
+      );
+      matched = matchRes.rows[0].n;
+
+      const updateRes = await client.query(
+        `${incomingCte}
+         UPDATE observations o
+            SET absolute_pressure_hpa =
+                  COALESCE(o.absolute_pressure_hpa, i.absolute_pressure_hpa),
+                relative_pressure_hpa =
+                  COALESCE(o.relative_pressure_hpa, i.relative_pressure_hpa)
+           FROM incoming i
+          WHERE o.station_slug = $${stationParam}
+            AND o.ts = i.ts
+            AND (
+              (o.absolute_pressure_hpa IS NULL AND i.absolute_pressure_hpa IS NOT NULL)
+              OR
+              (o.relative_pressure_hpa IS NULL AND i.relative_pressure_hpa IS NOT NULL)
+            )`,
+        params
+      );
+      updated = updateRes.rowCount;
+    }
+
+    const metadata = await updatePressureDayMetadata(client, stationRow, day, {
+      fetchedAt,
+      cycleType,
+      provenance,
+    });
+    return {
+      received: incoming.length,
+      matched,
+      unmatched: incoming.length - matched,
+      updated,
+      ...metadata,
+    };
+  });
 }
 
 /**

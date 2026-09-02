@@ -16,6 +16,8 @@
     "archive:forecast": "node scripts/archive-hrrr-forecast.mjs",
     "archive:predictions": "node scripts/materialize-night-before-predictions.mjs",
     "archive:backup": "node scripts/backup-archive.mjs",
+    "backfill:pressure": "node scripts/backfill-ecowitt-pressure.mjs",
+    "export:history": "node scripts/export-station-history.mjs",
     "publish:discussion": "node scripts/publish-discussion.mjs",
     "publish:discussion:dry-run": "node scripts/publish-discussion.mjs --dry-run",
     "refresh": "node scripts/katabatic-refresh.mjs",

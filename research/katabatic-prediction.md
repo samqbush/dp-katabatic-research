@@ -460,6 +460,32 @@ Two things remain true and justify doing it soon anyway, just without panic:
 - [ ] Build a per-day chunked archiver. Backfill everything available, then append daily.
       Store whatever resolution the API returns; do not treat 30-minute rows as inferior.
 
+#### 4.4a On-site pressure collection added 2026-09-02
+
+The original archive contract retained wind, outdoor temperature, and humidity but omitted the
+Ecowitt gateway's barometer. This was inherited scope, not evidence that pressure was irrelevant.
+Starting 2026-09-02, every Ecowitt history request also retains the raw absolute station pressure
+and relative pressure series in hPa.
+
+Historical Soda pressure is an **additive timestamp-matched enrichment**, never a forced day
+replacement. That distinction is load-bearing: Ecowitt may now serve an old day more coarsely than
+the wind rows already preserved, so replacing the day to gain pressure would destroy better wind
+evidence. Existing pressure values are immutable and only null cells are filled. Pressure has its
+own `fetched_at`, `cycle_type`, status, count, and retrospective/co-captured provenance. A fine wind
+row with blank pressure therefore means Ecowitt no longer returned pressure at that timestamp; it
+does not mean zero pressure and it must not be interpolated.
+
+Absolute and relative pressure are stored exactly as reported even when they are identical. A
+single on-site pressure value is not itself the regional pressure gradient proposed in §6.1, and no
+pressure predictor is promoted by this collection change. It preserves the raw evidence for a
+future preregistered pressure-trend or gradient test.
+
+The initial 2026-09-02 fill left no eligible Soda day unattempted: 395 retrospective days had
+pressure (329 complete and 66 partial), and the current day was verified through the normal
+co-capture path. At that snapshot, 37,043 of 46,347 archived observations had both pressure fields;
+the remaining 9,304 are preserved finer wind timestamps that Ecowitt no longer returned during the
+pressure fill. Those blanks are the expected consequence of protecting the better wind archive.
+
 ### 4.5 Park access is a hard constraint — and it defines the season
 
 > 🔗 **SHIPPED** — the gate-hours table and the "+57 min after sunrise" session close are

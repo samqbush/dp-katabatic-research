@@ -152,11 +152,18 @@ To run any of it by hand:
 npm run archive:ecowitt   # pull recent station history into the archive
 npm run archive:forecast  # capture the 00Z model run for tomorrow morning
 npm run archive:predictions # materialize predictions for existing raw forecasts (retrospective)
+npm run backfill:pressure # fill missing Soda pressure without replacing archived wind
+npm run export:history    # export Soda observations and pressure to CSV
 npm run refresh           # the full archive ritual: fetch, re-label, re-score
 npm run backtest          # re-score the rule against everything on record
 ```
 
 Requires Node 20+ and a Postgres connection string (`NEON_DATABASE_URL`).
+
+Ecowitt observations include both raw absolute station pressure and relative pressure in hPa.
+Pressure has independent day-level capture time and cadence metadata because the retrospective
+pressure fill may be coarser than the wind rows already preserved. A blank historical pressure
+cell is unknown/unavailable, never zero.
 
 ### Why the archive job is scheduled, not manual
 

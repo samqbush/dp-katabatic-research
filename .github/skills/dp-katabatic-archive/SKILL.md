@@ -139,6 +139,19 @@ you do not want to wait on an Ecowitt backfill:
 node scripts/archive-holfuy.mjs
 ```
 
+Ecowitt archiving also records absolute and relative pressure in hPa. The one-time Soda history
+enrichment is deliberately separate:
+
+```bash
+npm run backfill:pressure
+```
+
+It fills pressure only on exact timestamps already present in Neon and never replaces archived
+wind. Do not substitute `archive-ecowitt.mjs --force`: old Ecowitt responses may be coarser than
+the wind rows already preserved. The pressure backfill is resumable, skips completed days, and
+must not run concurrently with another Ecowitt archive job because both share the research
+account's request-rate budget.
+
 ## When to run it
 
 **Daily is the target cadence**, driven by the Holfuy window rather than by Ecowitt — and the

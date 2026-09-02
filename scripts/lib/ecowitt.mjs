@@ -196,7 +196,61 @@ export async function findDevice(nameFragment) {
 }
 
 /**
- * Fetch a window of history. Returns `{ points, cycleType }`.
+ * Parse one Ecowitt history payload into the archive point contract.
+ *
+ * Wind timestamps remain canonical because observations require wind. Pressure timestamps that
+ * do not align are reported rather than invented as wind observations.
+ */
+export function parseHistoryData(data = {}) {
+  const speed = data.wind?.wind_speed?.list || {};
+  const gust = data.wind?.wind_gust?.list || {};
+  const dir = data.wind?.wind_direction?.list || {};
+  const temp = data.outdoor?.temperature?.list || {};
+  const rh = data.outdoor?.humidity?.list || {};
+  const absolutePressure = data.pressure?.absolute?.list || {};
+  const relativePressure = data.pressure?.relative?.list || {};
+
+  const points = Object.keys(speed)
+    .map((ts) => ({
+      ts: parseInt(ts, 10),
+      speed: parseFloat(speed[ts]),
+      gust: parseFloat(gust[ts] ?? speed[ts]),
+      dir: parseFloat(dir[ts]),
+      temp: temp[ts] !== undefined ? parseFloat(temp[ts]) : null,
+      rh: rh[ts] !== undefined ? parseFloat(rh[ts]) : null,
+      absolute_pressure_hpa:
+        absolutePressure[ts] !== undefined ? parseFloat(absolutePressure[ts]) : null,
+      relative_pressure_hpa:
+        relativePressure[ts] !== undefined ? parseFloat(relativePressure[ts]) : null,
+    }))
+    .filter((p) => Number.isFinite(p.speed))
+    .sort((a, b) => a.ts - b.ts);
+
+  const windTimestamps = new Set(points.map((p) => String(p.ts)));
+  const pressureTimestamps = new Set([
+    ...Object.keys(absolutePressure),
+    ...Object.keys(relativePressure),
+  ]);
+  const pressure = {
+    absoluteCount: Object.values(absolutePressure).filter((v) => Number.isFinite(parseFloat(v))).length,
+    relativeCount: Object.values(relativePressure).filter((v) => Number.isFinite(parseFloat(v))).length,
+    matchedCount: points.filter(
+      (p) => Number.isFinite(p.absolute_pressure_hpa) || Number.isFinite(p.relative_pressure_hpa)
+    ).length,
+    unmatchedCount: [...pressureTimestamps].filter((ts) => !windTimestamps.has(ts)).length,
+    cycleType: inferCycleType(
+      [...pressureTimestamps]
+        .map((ts) => ({ ts: parseInt(ts, 10) }))
+        .filter((p) => Number.isFinite(p.ts))
+        .sort((a, b) => a.ts - b.ts)
+    ),
+  };
+
+  return { points, pressure };
+}
+
+/**
+ * Fetch a window of history. Returns `{ points, cycleType, pressure }`.
  *
  * `points` may legitimately be empty — that is data, not an error (see §4.2). Callers must
  * decide what an empty result means based on the date; this function will not guess.
@@ -212,7 +266,7 @@ export async function getHistory(mac, start, end, { cycleType = 'auto', onRateLi
           start_date: fmtEcowittDate(start),
           end_date: fmtEcowittDate(end),
           cycle_type: cycleType,
-          call_back: 'wind,outdoor',
+          call_back: 'wind,outdoor,pressure',
           ...UNITS,
         },
         timeout: 25000,
@@ -221,26 +275,8 @@ export async function getHistory(mac, start, end, { cycleType = 'auto', onRateLi
         throw new EcowittError(`history error: ${res.data.msg}`, { rateLimited: isRateLimitMessage(res.data.msg) });
       }
 
-      const d = res.data.data || {};
-      const speed = d.wind?.wind_speed?.list || {};
-      const gust = d.wind?.wind_gust?.list || {};
-      const dir = d.wind?.wind_direction?.list || {};
-      const temp = d.outdoor?.temperature?.list || {};
-      const rh = d.outdoor?.humidity?.list || {};
-
-      const points = Object.keys(speed)
-        .map((ts) => ({
-          ts: parseInt(ts, 10),
-          speed: parseFloat(speed[ts]),
-          gust: parseFloat(gust[ts] ?? speed[ts]),
-          dir: parseFloat(dir[ts]),
-          temp: temp[ts] !== undefined ? parseFloat(temp[ts]) : null,
-          rh: rh[ts] !== undefined ? parseFloat(rh[ts]) : null,
-        }))
-        .filter((p) => Number.isFinite(p.speed))
-        .sort((a, b) => a.ts - b.ts);
-
-      return { points, cycleType: inferCycleType(points) };
+      const parsed = parseHistoryData(res.data.data || {});
+      return { ...parsed, cycleType: inferCycleType(parsed.points) };
     },
     { label: `history ${fmtEcowittDate(start)}`, onRateLimit }
   );
