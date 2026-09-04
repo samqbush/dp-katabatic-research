@@ -1,0 +1,34 @@
+name: Deploy forecast dispatcher
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - cloudflare/forecast-dispatcher/**
+      - .github/workflows/deploy-forecast-dispatcher.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-forecast-dispatcher
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Deploy Cloudflare Worker
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config cloudflare/forecast-dispatcher/wrangler.toml
+          secrets: |
+            GITHUB_DISPATCH_TOKEN
+        env:
+          GITHUB_DISPATCH_TOKEN: ${{ secrets.KATABATIC_GITHUB_DISPATCH_TOKEN }}
