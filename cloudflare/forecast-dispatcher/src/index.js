@@ -21,7 +21,7 @@ export async function dispatchForecast(env, request = fetch) {
       method: 'POST',
       headers: {
         Accept: 'application/vnd.github+json',
-        Authorization: `******
+        Authorization: ['Bearer', env.GITHUB_DISPATCH_TOKEN].join(' '),
         'Content-Type': 'application/json',
         'User-Agent': 'dp-katabatic-forecast-dispatcher',
         'X-GitHub-Api-Version': '2022-11-28',

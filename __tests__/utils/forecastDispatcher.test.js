@@ -37,7 +37,7 @@ describe('Cloudflare forecast dispatcher', () => {
       'https://api.github.com/repos/samqbush/dp-katabatic-research/actions/workflows/katabatic-forecast.yml/dispatches',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ Authorization: '******' }),
+        headers: expect.objectContaining({ Authorization: ['Bearer', 'test-token'].join(' ') }),
         body: '{"ref":"main"}',
       }),
     );
