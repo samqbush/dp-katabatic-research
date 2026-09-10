@@ -5,6 +5,9 @@ This Cloudflare Worker dispatches the existing `katabatic-forecast.yml` workflow
 registered and the Worker ignores whichever hour is inactive after the daylight-saving change.
 The second dispatch is a safe retry because issued predictions are immutable.
 
+The Worker is cron-only and has no public `workers.dev` route. Do not create a Worker manually;
+the GitHub Actions deployment creates it and installs its encrypted GitHub token.
+
 Deployment is automatic after changes under this directory reach `main`. It requires these
 GitHub Actions repository secrets:
 

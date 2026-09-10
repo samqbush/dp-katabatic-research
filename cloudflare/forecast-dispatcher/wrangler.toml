@@ -1,7 +1,7 @@
 name = "dp-katabatic-forecast-dispatcher"
 main = "src/index.js"
 compatibility_date = "2026-09-03"
-workers_dev = true
+workers_dev = false
 
 [vars]
 GITHUB_OWNER = "samqbush"
