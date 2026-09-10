@@ -27,7 +27,8 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --config cloudflare/forecast-dispatcher/wrangler.toml
+          workingDirectory: cloudflare/forecast-dispatcher
+          command: deploy
           secrets: |
             GITHUB_DISPATCH_TOKEN
         env:
