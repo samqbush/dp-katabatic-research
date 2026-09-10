@@ -5,8 +5,10 @@ This Cloudflare Worker dispatches the existing `katabatic-forecast.yml` workflow
 registered and the Worker ignores whichever hour is inactive after the daylight-saving change.
 The second dispatch is a safe retry because issued predictions are immutable.
 
-The Worker is cron-only and has no public `workers.dev` route. Do not create a Worker manually;
-the GitHub Actions deployment creates it and installs its encrypted GitHub token.
+The Worker is cron-only and has no public `workers.dev` route. Cloudflare still requires the
+account-level `workers.dev` subdomain to be initialized before it permits cron schedules: open
+**Workers & Pages** once and choose an account subdomain if prompted. Do not create a Worker
+manually; the GitHub Actions deployment creates it and installs its encrypted GitHub token.
 
 Deployment is automatic after changes under this directory reach `main`. It requires these
 GitHub Actions repository secrets:
@@ -17,3 +19,7 @@ GitHub Actions repository secrets:
 
 The GitHub token is uploaded to the Worker as the encrypted `GITHUB_DISPATCH_TOKEN` secret. Never
 put any of these values in this file or `wrangler.toml`.
+
+To verify a newly created or rotated GitHub token without waiting for the nightly cron, manually
+run **Deploy forecast dispatcher** with **Test dispatch** enabled. It invokes the forecast
+workflow's validation-only path, which reads and writes no forecast data.

@@ -29,6 +29,10 @@ on:
       to:
         description: 'Backfill end (YYYY-MM-DD), optional'
         required: false
+      validate_only:
+        description: 'Validate workflow dispatch without reading or writing forecast data'
+        type: boolean
+        default: false
 
 concurrency:
   group: katabatic-forecast
@@ -55,8 +59,11 @@ jobs:
           INPUT_DATE: ${{ inputs.date }}
           INPUT_FROM: ${{ inputs.from }}
           INPUT_TO: ${{ inputs.to }}
+          INPUT_VALIDATE_ONLY: ${{ inputs.validate_only }}
         run: |
-          if [ -n "$INPUT_DATE" ] && { [ -n "$INPUT_FROM" ] || [ -n "$INPUT_TO" ]; }; then
+          if [ "$INPUT_VALIDATE_ONLY" = "true" ]; then
+            echo "Workflow dispatch validated; forecast collection intentionally skipped."
+          elif [ -n "$INPUT_DATE" ] && { [ -n "$INPUT_FROM" ] || [ -n "$INPUT_TO" ]; }; then
             echo "::error::date cannot be combined with from/to"
             exit 1
           elif { [ -n "$INPUT_FROM" ] && [ -z "$INPUT_TO" ]; } ||
