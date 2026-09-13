@@ -2619,6 +2619,14 @@ The classifier is deliberately conservative. A wrong physical story is worse tha
 These literals, thresholds, windows, and precedence define `flow-class-v1`. Any later correction
 requires `flow-class-v2`; historical v1 values are never silently rewritten under the same name.
 
+> **Implementation correction (2026-09-13):** the shipped `flow-class-v1` transition branch is
+> slightly broader than item 2 above. It requires an organized second W/NW pulse overlapping the
+> post-gate window after a qualifying collapse. Before that collapse, the code accepts either a
+> pre-sunrise `PRESENT` checkpoint **or any earlier organized W/NW pulse**; that earlier pulse is
+> not itself required to be pre-sunrise and is not proven to be drainage. Generated reports now
+> describe this implemented condition rather than overstating the physical attribution. V1 is not
+> tightened or relabeled after the fact; a corrected definition would require `flow-class-v2`.
+
 ### 17.3 Reporting contract
 
 Every report must keep the axes separate. A valid combined description is

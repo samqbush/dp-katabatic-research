@@ -14,6 +14,12 @@ import { FEATURE_VERSION_V3, RULE_VERSION_V3 } from './versions.mjs';
 export const SHORT_TREND_BAND_MPH = 1.5;
 export const SEVERE_DROP_MPH = 3;
 export const MAX_RECENT_AGE_MIN = 30;
+export const STRUCTURE_DIRECTION_LOCK_PCT = 80;
+export const STRUCTURE_DIRECTION_PARTIAL_PCT = 50;
+export const STRUCTURE_HUMIDITY_DROP_POINTS = 5;
+export const STRUCTURE_NEIGHBOR_RATIO = 0.5;
+export const STRUCTURE_PRESENT_SCORE = 3;
+export const STRUCTURE_POSSIBLE_SCORE = 1;
 
 const mean = (nums) => (nums.length ? nums.reduce((sum, n) => sum + n, 0) / nums.length : null);
 
@@ -74,10 +80,10 @@ export function classifyKatabaticStructure(f) {
   const reasons = [];
 
   if (f.inIdealPct !== null) {
-    if (f.inIdealPct >= 80) {
+    if (f.inIdealPct >= STRUCTURE_DIRECTION_LOCK_PCT) {
       score += 2;
       reasons.push(`direction locked in the ideal window (${f.inIdealPct.toFixed(0)}%)`);
-    } else if (f.inIdealPct >= 50) {
+    } else if (f.inIdealPct >= STRUCTURE_DIRECTION_PARTIAL_PCT) {
       score += 1;
       reasons.push(`direction partly in the ideal window (${f.inIdealPct.toFixed(0)}%)`);
     } else {
@@ -85,12 +91,16 @@ export function classifyKatabaticStructure(f) {
     }
   }
 
-  if (f.rhDelta !== null && f.rhDelta <= -5) {
+  if (f.rhDelta !== null && f.rhDelta <= -STRUCTURE_HUMIDITY_DROP_POINTS) {
     score += 1;
     reasons.push(`overnight humidity fell ${Math.abs(f.rhDelta).toFixed(0)} points`);
   }
 
-  if (f.neighborMax !== null && f.avg30 > 0 && f.neighborMax / f.avg30 < 0.5) {
+  if (
+    f.neighborMax !== null &&
+    f.avg30 > 0 &&
+    f.neighborMax / f.avg30 < STRUCTURE_NEIGHBOR_RATIO
+  ) {
     score += 1;
     reasons.push('neighbor stations are comparatively calm');
   }
@@ -100,7 +110,12 @@ export function classifyKatabaticStructure(f) {
     reasons.push('the broader overnight wind profile is building');
   }
 
-  const status = score >= 3 ? 'PRESENT' : score >= 1 ? 'POSSIBLE' : 'ABSENT';
+  const status =
+    score >= STRUCTURE_PRESENT_SCORE
+      ? 'PRESENT'
+      : score >= STRUCTURE_POSSIBLE_SCORE
+        ? 'POSSIBLE'
+        : 'ABSENT';
   return { status, score, reasons };
 }
 

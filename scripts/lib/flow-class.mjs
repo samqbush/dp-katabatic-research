@@ -21,15 +21,15 @@ export const FLOW_CLASSES = [
   'unknown',
 ];
 
-const TARGET_STEP_MIN = 5;
-const MAX_NEIGHBOR_STEP_MIN = 30;
-const CHECKPOINT_STEP_MIN = 15;
-const PULSE_MINUTES = 30;
-const IDEAL_MIN_DEG = 270;
-const IDEAL_MAX_DEG = 330;
-const IDEAL_PCT = 80;
-const LOCAL_RATIO = 0.5;
-const REGIONAL_RATIO = 0.9;
+export const FLOW_TARGET_STEP_MIN = 5;
+export const FLOW_MAX_NEIGHBOR_STEP_MIN = 30;
+export const FLOW_CHECKPOINT_STEP_MIN = 15;
+export const FLOW_PULSE_MINUTES = 30;
+export const FLOW_IDEAL_MIN_DEG = 270;
+export const FLOW_IDEAL_MAX_DEG = 330;
+export const FLOW_IDEAL_PCT = 80;
+export const FLOW_LOCAL_RATIO = 0.5;
+export const FLOW_REGIONAL_RATIO = 0.9;
 
 function cycleMinutes(cycleType) {
   const match = /^(\d+)min$/.exec(cycleType ?? '');
@@ -37,7 +37,11 @@ function cycleMinutes(cycleType) {
 }
 
 function inIdealDirection(direction) {
-  return Number.isFinite(direction) && direction >= IDEAL_MIN_DEG && direction <= IDEAL_MAX_DEG;
+  return (
+    Number.isFinite(direction) &&
+    direction >= FLOW_IDEAL_MIN_DEG &&
+    direction <= FLOW_IDEAL_MAX_DEG
+  );
 }
 
 function mean(values) {
@@ -96,13 +100,13 @@ function organizedPulses(points) {
   return continuousRuns(
     points,
     (point) => Number(point.speed) >= CANOE_THRESHOLD_MPH,
-    TARGET_STEP_MIN,
+    FLOW_TARGET_STEP_MIN,
   ).filter((run) => {
-    if (run.minutes < PULSE_MINUTES) return false;
+    if (run.minutes < FLOW_PULSE_MINUTES) return false;
     const directions = run.points.map((point) => Number(point.dir)).filter(Number.isFinite);
     const inIdeal = directions.filter(inIdealDirection).length;
     run.inIdealPct = directions.length ? (inIdeal / directions.length) * 100 : 0;
-    return run.inIdealPct >= IDEAL_PCT;
+    return run.inIdealPct >= FLOW_IDEAL_PCT;
   });
 }
 
@@ -119,7 +123,7 @@ function checkpointEvidence(target, neighbors, sunriseTs) {
   const date = parseArchiveDate(target.date);
   const start = Math.floor(zonedTimeFrom(date, 0, 30, 0).getTime() / 1000);
   const checkpoints = [];
-  for (let ts = start; ts <= sunriseTs; ts += CHECKPOINT_STEP_MIN * 60) {
+  for (let ts = start; ts <= sunriseTs; ts += FLOW_CHECKPOINT_STEP_MIN * 60) {
     const features = computeFeaturesV5(target.points, ts, {
       station: target.station,
       threshold: CANOE_THRESHOLD_MPH,
@@ -131,7 +135,7 @@ function checkpointEvidence(target, neighbors, sunriseTs) {
     const localContrast =
       features?.avg30 > 0 &&
       neighborMeans.every((neighborMean) =>
-        neighborMean !== null && neighborMean / features.avg30 < LOCAL_RATIO
+        neighborMean !== null && neighborMean / features.avg30 < FLOW_LOCAL_RATIO
       );
     checkpoints.push({
       ts,
@@ -147,9 +151,9 @@ function checkpointEvidence(target, neighbors, sunriseTs) {
 
 function hasRegionalConcurrency(pulse, target, neighbors) {
   for (
-    let ts = pulse.startTs + PULSE_MINUTES * 60;
+    let ts = pulse.startTs + FLOW_PULSE_MINUTES * 60;
     ts <= pulse.endTs;
-    ts += CHECKPOINT_STEP_MIN * 60
+    ts += FLOW_CHECKPOINT_STEP_MIN * 60
   ) {
     const targetMean = trailingMean(target, ts);
     const neighborMeans = neighbors.map(({ record }) => trailingMean(record, ts));
@@ -157,7 +161,7 @@ function hasRegionalConcurrency(pulse, target, neighbors) {
       targetMean !== null &&
       targetMean >= CANOE_THRESHOLD_MPH &&
       neighborMeans.every((neighborMean) =>
-        neighborMean !== null && neighborMean / targetMean >= REGIONAL_RATIO
+        neighborMean !== null && neighborMean / targetMean >= FLOW_REGIONAL_RATIO
       )
     ) {
       return true;
@@ -184,7 +188,7 @@ export function classifyFlow(target, neighbors = []) {
   if (!target || target.status !== 'ok' || !target.points?.length) {
     return unknown('target observations are unavailable');
   }
-  if (cycleMinutes(target.cycle_type) !== TARGET_STEP_MIN) {
+  if (cycleMinutes(target.cycle_type) !== FLOW_TARGET_STEP_MIN) {
     return unknown('target observations are not at 5-minute resolution');
   }
 
@@ -203,7 +207,7 @@ export function classifyFlow(target, neighbors = []) {
       record.status !== 'ok' ||
       !record.points?.length ||
       step === null ||
-      step > MAX_NEIGHBOR_STEP_MIN
+      step > FLOW_MAX_NEIGHBOR_STEP_MIN
     ) {
       return unknown(`required neighbor ${slug} is unavailable or too coarse`);
     }
@@ -217,7 +221,7 @@ export function classifyFlow(target, neighbors = []) {
   const endTs = sunriseTs + MAX_MINUTES_PAST_SUNRISE * 60;
   const gateTs = Math.floor(gateOpenTime(date).getTime() / 1000);
 
-  if (!hasCoverage(target, startTs, endTs, TARGET_STEP_MIN)) {
+  if (!hasCoverage(target, startTs, endTs, FLOW_TARGET_STEP_MIN)) {
     return unknown('target coverage has a gap in the physical morning');
   }
   for (const { slug, record } of canonicalNeighbors) {
@@ -231,8 +235,8 @@ export function classifyFlow(target, neighbors = []) {
   const collapses = continuousRuns(
     targetPoints,
     (point) => Number(point.speed) < CANOE_THRESHOLD_MPH,
-    TARGET_STEP_MIN,
-  ).filter((run) => run.minutes >= PULSE_MINUTES);
+    FLOW_TARGET_STEP_MIN,
+  ).filter((run) => run.minutes >= FLOW_PULSE_MINUTES);
   const checkpoints = checkpointEvidence(target, canonicalNeighbors, sunriseTs);
   const present = checkpoints.filter((checkpoint) => checkpoint.structure === 'PRESENT');
   const local = present.filter((checkpoint) => checkpoint.localContrast);

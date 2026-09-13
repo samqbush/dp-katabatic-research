@@ -11,6 +11,8 @@ import { computeFeaturesV4 } from './call-rule-v4.mjs';
 import { FEATURE_VERSION_V5, RULE_VERSION_V5 } from './versions.mjs';
 
 export const MIN_PLAUSIBLE_THRESHOLD_RATIO = 0.6;
+export const POST_SUNRISE_DIRECTION_OVERRIDE_MINUTES = 85;
+export const POST_SUNRISE_MIN_IDEAL_PCT = 50;
 
 export { computeFeaturesV4 as computeFeaturesV5 };
 
@@ -19,9 +21,9 @@ export function classifyKatabaticStructureV5(f) {
   if (
     structure.status !== 'UNKNOWN' &&
     f.minutesPastSunrise !== null &&
-    f.minutesPastSunrise > 85 &&
+    f.minutesPastSunrise > POST_SUNRISE_DIRECTION_OVERRIDE_MINUTES &&
     f.inIdealPct !== null &&
-    f.inIdealPct < 50
+    f.inIdealPct < POST_SUNRISE_MIN_IDEAL_PCT
   ) {
     return {
       status: 'ABSENT',

@@ -1,3 +1,12 @@
+export function escapeDashboardText(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 export function renderDashboardHtml(instanceId) {
     return `<!doctype html>
 <html lang="en">
@@ -73,6 +82,9 @@ export function renderDashboardHtml(instanceId) {
     th:first-child, td:first-child { padding-left: 0; }
     th:last-child, td:last-child { padding-right: 0; }
     tbody tr:last-child td { border-bottom: 0; }
+    .methodology-table th, .methodology-table td { white-space: normal; vertical-align: top; }
+    .methodology-table th:first-child, .methodology-table td:first-child { width: 190px; }
+    .methodology-table code { white-space: nowrap; }
     .pill { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
     .yes { background: color-mix(in srgb, #3fb950 18%, transparent); color: #3fb950; }
     .no { background: color-mix(in srgb, #8b949e 18%, transparent); color: var(--text-color-muted, #8b949e); }
@@ -124,12 +136,7 @@ export function renderDashboardHtml(instanceId) {
   const threshold = document.getElementById("threshold");
   const thresholdValue = document.getElementById("threshold-value");
   const fmt = new Intl.NumberFormat();
-  const esc = (text) => String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  const esc = ${escapeDashboardText.toString()};
   const value = (v, suffix = "") => v === null || v === undefined ? "—" : v + suffix;
   const call = (v) => v === "PACK"
     ? '<span class="pill pack">PACK</span>'
@@ -138,16 +145,15 @@ export function renderDashboardHtml(instanceId) {
       : v === "MAYBE"
         ? '<span class="pill unknown">MAYBE</span>'
         : '<span class="pill neutral">No call</span>';
-  const phase = (v, predictionMode) => v === "held-out"
-    ? '<span class="pill yes">Held-out</span>' +
-        (predictionMode
-          ? '<div class="muted">' +
-              (predictionMode === "forward" ? "issued live" : "probability backfilled") +
-            '</div>'
-          : "")
+  const provenance = (v) => v === "forward"
+    ? '<span class="pill yes">Forward</span>'
+    : v === "retrospective"
+      ? '<span class="pill neutral">Retrospective</span>'
+      : "—";
+  const phase = (v) => v === "held-out"
+    ? '<span class="pill yes">Held-out</span>'
     : v === "backfill"
-      ? '<span class="pill neutral">Backfill</span>' +
-          (predictionMode ? '<div class="muted">probability ' + esc(predictionMode) + '</div>' : "")
+      ? '<span class="pill neutral">Backfill</span>'
       : "—";
   const chance = (percent, raw) => percent === null || percent === undefined
     ? "—"
@@ -159,6 +165,12 @@ export function renderDashboardHtml(instanceId) {
     threshold.value = data.parameters.thresholdMph;
     thresholdValue.value = data.parameters.thresholdMph + " mph";
     const s = data.summary;
+    const methodology = data.methodology;
+    const targetThreshold = data.research.probabilityModel?.targetThresholdMph;
+    const hasTargetThreshold = Number.isFinite(Number(targetThreshold));
+    const sensitivityMode =
+      hasTargetThreshold &&
+      Number(data.parameters.thresholdMph) !== Number(targetThreshold);
     const stations = data.stationHealth.map((station) => \`
       <div class="station">
         <span class="dot \${station.health}" title="\${station.health}"></span>
@@ -174,7 +186,8 @@ export function renderDashboardHtml(instanceId) {
     const rows = data.recent.map((day) => \`
       <tr>
         <td><strong>\${day.date}</strong><div class="muted">\${day.cycleType ?? day.status}</div></td>
-        <td>\${phase(day.forecastPhase, day.predictionMode)}</td>
+        <td>\${provenance(day.predictionMode)}</td>
+        <td>\${phase(day.forecastPhase)}</td>
         <td title="\${esc(day.forecastCallReason ?? "No complete forecast")}">\${call(day.forecastCall)}</td>
         <td>\${chance(day.successChancePercent, day.successChanceRaw)}</td>
         <td>\${esc(day.sessionOutcome ?? "—")}</td>
@@ -190,6 +203,30 @@ export function renderDashboardHtml(instanceId) {
         <td>\${value(day.avgForecastWindMph, " mph")}</td>
         <td>\${value(day.avgLidM, " m")}</td>
       </tr>\`).join("");
+    const methodologyRows = methodology.fields.map((field) => \`
+      <tr>
+        <td><strong>\${esc(field.name)}</strong></td>
+        <td>\${esc(field.sourceWindow)}</td>
+        <td>\${esc(field.calculation)}</td>
+      </tr>\`).join("");
+    const prerequisiteRows = methodology.flowPrerequisites.map((item) => \`
+      <tr><td><strong>\${esc(item.component)}</strong></td><td>\${esc(item.rule)}</td></tr>
+    \`).join("");
+    const structureRows = methodology.structureScore.map((item) => \`
+      <tr><td><strong>\${esc(item.component)}</strong></td><td>\${esc(item.rule)}</td></tr>
+    \`).join("");
+    const flowRows = methodology.flowClasses.map((item) => \`
+      <tr><td><strong>\${esc(item.value)}</strong></td><td>\${esc(item.rule)}</td></tr>
+    \`).join("");
+    const sensitivityNotice = sensitivityMode
+      ? \`<section class="notice">
+          <strong>Threshold-sensitivity view.</strong>
+          The selected \${esc(data.parameters.thresholdMph)} mph threshold recomputes observed
+          session classes, summary counts, held-out rideable/miss metrics, and call-result
+          comparisons. Stored calls, stored chances, the frozen \${esc(targetThreshold)} mph chance
+          target, and flow mechanisms do not change.
+        </section>\`
+      : "";
 
     content.innerHTML = \`
       <section class="notice">
@@ -202,11 +239,12 @@ export function renderDashboardHtml(instanceId) {
         \${fmt.format(data.research.probabilityModel?.trainingPairs ?? 0)} backfill mornings and
         rounds to the nearest 5%.
       </section>
+      \${sensitivityNotice}
       <section class="metrics">
         <div class="card"><div class="eyebrow muted">Held-out pairs</div><div class="metric">\${fmt.format(s.heldOutPairs)}</div><div class="muted">new since \${data.research.forwardHoldoutStart}</div></div>
         <div class="card"><div class="eyebrow muted">Historical backfill</div><div class="metric">\${fmt.format(s.historicalBackfillPairs)}</div><div class="muted">already used to develop/test the rule</div></div>
-        <div class="card"><div class="eyebrow muted">Held-out missed sessions</div><div class="metric">\${fmt.format(s.heldOutMisses)} / \${fmt.format(s.heldOutRideable)}</div><div class="muted">SLEEP IN on a rideable morning</div></div>
-        <div class="card"><div class="eyebrow muted">Usable mornings</div><div class="metric">\${fmt.format(s.usableMornings)}</div><div class="muted">\${fmt.format(s.rideableMornings)} sustained · \${fmt.format(s.gustDrivenMornings)} gust-driven/canoe</div></div>
+        <div class="card"><div class="eyebrow muted">\${sensitivityMode ? "Threshold-sensitivity misses" : "Held-out missed sessions"}</div><div class="metric">\${fmt.format(s.heldOutMisses)} / \${fmt.format(s.heldOutRideable)}</div><div class="muted">SLEEP IN on a \${esc(data.parameters.thresholdMph)} mph sustained morning</div></div>
+        <div class="card"><div class="eyebrow muted">\${sensitivityMode ? "Threshold-sensitivity mornings" : "Usable mornings"}</div><div class="metric">\${fmt.format(s.usableMornings)}</div><div class="muted">\${fmt.format(s.rideableMornings)} sustained at \${esc(data.parameters.thresholdMph)} mph · \${fmt.format(s.gustDrivenMornings)} gust-driven/canoe</div></div>
         <div class="card"><div class="eyebrow muted">Latest Soda day</div><div class="metric">\${s.latestSodaDate ?? "—"}</div><div class="muted">\${fmt.format(s.forecastDays)} archived forecast days</div></div>
       </section>
       <div class="grid">
@@ -219,25 +257,55 @@ export function renderDashboardHtml(instanceId) {
           <h2>Recent Soda mornings</h2>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Date</th><th>Sample</th><th>Experimental call</th><th>Chance</th><th>Session outcome</th><th>Flow mechanism</th><th>Minutes ≥\${esc(data.parameters.thresholdMph)}</th><th>Minutes ≥12</th><th>Gust support</th><th>Avg HRRR wind</th><th>Avg lid</th></tr></thead>
-              <tbody>\${rows || '<tr><td colspan="11">No archived mornings.</td></tr>'}</tbody>
+              <thead><tr><th>Date</th><th>Prediction provenance</th><th>Experiment phase</th><th>Experimental call</th><th>Chance</th><th>Session outcome</th><th>Flow mechanism</th><th>Minutes ≥\${esc(data.parameters.thresholdMph)}</th><th>Minutes ≥12</th><th>Gust support</th><th>Avg HRRR wind</th><th>Avg lid</th></tr></thead>
+              <tbody>\${rows || '<tr><td colspan="12">No archived mornings.</td></tr>'}</tbody>
             </table>
           </div>
           <div class="muted" style="margin-top:12px">
-            Rule inputs are the 05:00–08:00 average HRRR wind and average boundary-layer lid from
-            the exact 00Z run available the evening before. “Chance” means
-            \${esc(data.research.probabilityModel?.target ?? "the current rideable outcome")};
-            it is not yet a calibrated product probability.
-            Session outcome and both minutes columns are gate-conditioned through sunrise +3 hours.
-            “Sustained” retains the strict selected-threshold target; “gust-driven/canoe” is the
-            additive 12 mph tier. Flow mechanism is a separate exploratory full-morning outcome.
-            Data gaps break a run. An em dash means unavailable or too coarse, not calm.
             \${fmt.format(s.storedPredictionDays)} forecast days have stored predictions;
             \${fmt.format(s.forecastsWithoutPrediction)} do not. \${fmt.format(s.matchedPairs)}
             total matched pairs; \${fmt.format(s.outcomesWithoutForecast)} usable outcomes lack
             forecasts; \${fmt.format(s.forecastsWithoutOutcome)} forecasts do not yet have
             labelable outcomes.
           </div>
+        </section>
+        <section class="panel">
+          <h2>How each field is calculated</h2>
+          <div class="table-wrap">
+            <table class="methodology-table">
+              <thead><tr><th>Field</th><th>Source and window</th><th>Calculation and interpretation</th></tr></thead>
+              <tbody>\${methodologyRows}</tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>How flow mechanism is classified</h2>
+          <div class="notice">
+            <strong>Exploratory outcome, not a predictor.</strong>
+            This classifier reads the completed physical morning and never feeds the call or chance.
+          </div>
+          <h3>Required evidence and event shapes</h3>
+          <div class="table-wrap">
+            <table class="methodology-table">
+              <thead><tr><th>Component</th><th><code>flow-class-v1</code> rule</th></tr></thead>
+              <tbody>\${prerequisiteRows}</tbody>
+            </table>
+          </div>
+          <h3>Pre-sunrise structure score</h3>
+          <div class="table-wrap">
+            <table class="methodology-table">
+              <thead><tr><th>Component</th><th>Score rule</th></tr></thead>
+              <tbody>\${structureRows}</tbody>
+            </table>
+          </div>
+          <h3>Category precedence</h3>
+          <div class="table-wrap">
+            <table class="methodology-table">
+              <thead><tr><th>Value</th><th>Rule</th></tr></thead>
+              <tbody>\${flowRows}</tbody>
+            </table>
+          </div>
+          <div class="muted" style="margin-top:12px">\${esc(methodology.missingValues)}</div>
         </section>
       </div>\`;
   }

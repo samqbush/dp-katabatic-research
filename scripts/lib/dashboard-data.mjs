@@ -6,6 +6,7 @@ import {
     experimentalCallResult,
     FORWARD_HOLDOUT_START,
 } from "./night-before-call.mjs";
+import { buildReportMethodology } from "./report-methodology.mjs";
 import { zonedTimeFrom } from "./zone.mjs";
 import { SODA_NEIGHBOR_SLUGS, SODA_SLUG } from "./stations.mjs";
 
@@ -90,7 +91,8 @@ async function loadPredictionModel() {
             target_threshold_mph,
             target_sustained_minutes,
             target_description,
-            status
+            status,
+            parameters
         FROM night_before_models
         ORDER BY created_at DESC, model_version DESC
         LIMIT 1
@@ -107,8 +109,12 @@ async function loadPredictionModel() {
         targetSustainedMinutes: row.target_sustained_minutes,
         target: row.target_description,
         status: row.status,
+        parameters: row.parameters,
     };
 }
+
+export const COMPLETE_FORECAST_PAIR_SQL =
+    "h.lid_m IS NOT NULL AND h.wind_mph IS NOT NULL";
 
 async function loadForecasts(modelVersion, { from, to } = {}) {
     const { rows } = await query(`
@@ -126,11 +132,15 @@ async function loadForecasts(modelVersion, { from, to } = {}) {
                 h.local_date,
                 h.run_init,
                 min(h.lid_m) AS min_lid_m,
-                avg(h.lid_m) AS avg_lid_m,
-                avg(h.wind_mph) AS avg_wind_mph,
+                avg(h.lid_m) FILTER (
+                    WHERE ${COMPLETE_FORECAST_PAIR_SQL}
+                ) AS avg_lid_m,
+                avg(h.wind_mph) FILTER (
+                    WHERE ${COMPLETE_FORECAST_PAIR_SQL}
+                ) AS avg_wind_mph,
                 max(h.wind_mph) AS max_wind_mph,
                 count(*) FILTER (
-                    WHERE h.lid_m IS NOT NULL AND h.wind_mph IS NOT NULL
+                    WHERE ${COMPLETE_FORECAST_PAIR_SQL}
                 )::int AS forecast_hours
             FROM hrrr_forecasts h
             JOIN latest_runs r
@@ -416,6 +426,11 @@ export async function loadDashboardData({
             morningAutomation:
                 "None. No GitHub Action runs /dp-katabatic-check or sends a wake-up alarm.",
         },
+        methodology: buildReportMethodology({
+            thresholdMph,
+            model: probabilityModel,
+            forwardHoldoutStart: FORWARD_HOLDOUT_START,
+        }),
         stationHealth,
         recent,
     };

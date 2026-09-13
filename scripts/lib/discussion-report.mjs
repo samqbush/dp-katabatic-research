@@ -34,7 +34,7 @@ export function reportWindowStart(now = new Date(), days = REPORT_DAYS) {
   return new Date(Date.UTC(year, month - 1, day - days + 1)).toISOString().slice(0, 10);
 }
 
-function cell(value) {
+export function escapeDiscussionCell(value) {
   if (value === null || value === undefined || value === '') return '—';
   return String(value)
     .replaceAll('\\', '\\\\')
@@ -44,12 +44,6 @@ function cell(value) {
 
 function value(value, suffix = '') {
   return value === null || value === undefined ? '—' : `${value}${suffix}`;
-}
-
-function sample(day) {
-  if (day.predictionMode === 'forward') return 'forward';
-  if (day.predictionMode === 'retrospective') return 'retrospective';
-  return day.forecastPhase ?? 'no prediction';
 }
 
 function latestSourceUpdate(data, latestForecast) {
@@ -80,6 +74,9 @@ export function assertPublishableReport(data) {
   if (!data.recent.some((day) => day.forecastCall && day.predictionMode)) {
     throw new Error('Refusing to publish without a stored prediction.');
   }
+  if (!data.methodology?.fields?.length || !data.methodology?.flowClasses?.length) {
+    throw new Error('Refusing to publish without report methodology.');
+  }
 }
 
 export function renderDiscussionReport(data) {
@@ -94,54 +91,102 @@ export function renderDiscussionReport(data) {
   const model = data.research.probabilityModel;
 
   const rows = data.recent.map((day) => [
-    `${cell(day.date)}<br><sub>${cell(sample(day))}</sub>`,
-    cell(day.forecastCall ?? 'No call'),
-    cell(day.successChancePercent === null ? null : `${day.successChancePercent}%`),
-    cell(day.sessionOutcome),
-    cell(day.flowClass),
-    cell(value(day.sustainedMinutes, ' min')),
-    cell(value(day.canoeSustainedMinutes, ' min')),
-    cell(gustEvidence(day)),
-    cell(value(day.avgForecastWindMph, ' mph')),
-    cell(value(day.avgLidM, ' m')),
+    escapeDiscussionCell(day.date),
+    escapeDiscussionCell(day.predictionMode),
+    escapeDiscussionCell(day.forecastPhase),
+    escapeDiscussionCell(day.forecastCall ?? 'No call'),
+    escapeDiscussionCell(
+      day.successChancePercent === null ? null : `${day.successChancePercent}%`,
+    ),
+    escapeDiscussionCell(day.sessionOutcome),
+    escapeDiscussionCell(day.flowClass),
+    escapeDiscussionCell(value(day.sustainedMinutes, ' min')),
+    escapeDiscussionCell(value(day.canoeSustainedMinutes, ' min')),
+    escapeDiscussionCell(gustEvidence(day)),
+    escapeDiscussionCell(value(day.avgForecastWindMph, ' mph')),
+    escapeDiscussionCell(value(day.avgLidM, ' m')),
   ].join(' | '));
 
   const latestSummary = [
-    `**${cell(latestForecast.date)}: ${cell(latestForecast.forecastCall)}`,
+    `**${escapeDiscussionCell(latestForecast.date)}: ${escapeDiscussionCell(latestForecast.forecastCall)}`,
     latestForecast.successChancePercent === null
       ? ''
-      : ` · ${cell(latestForecast.successChancePercent)}% exploratory chance`,
+      : ` · ${escapeDiscussionCell(latestForecast.successChancePercent)}% exploratory chance`,
     '**',
   ].join('');
+  const methodology = data.methodology;
+  const fieldRows = methodology.fields.map((field) =>
+    `| ${escapeDiscussionCell(field.name)} | ${escapeDiscussionCell(field.sourceWindow)} | ${escapeDiscussionCell(field.calculation)} |`
+  );
+  const prerequisiteRows = methodology.flowPrerequisites.map((item) =>
+    `| ${escapeDiscussionCell(item.component)} | ${escapeDiscussionCell(item.rule)} |`
+  );
+  const structureRows = methodology.structureScore.map((item) =>
+    `| ${escapeDiscussionCell(item.component)} | ${escapeDiscussionCell(item.rule)} |`
+  );
+  const flowRows = methodology.flowClasses.map((item) =>
+    `| ${escapeDiscussionCell(item.value)} | ${escapeDiscussionCell(item.rule)} |`
+  );
 
   const lines = [
     '# Night-before katabatic research',
     '',
     '> [!CAUTION]',
-    `> **Research display only — not a go/no-go recommendation.** ${cell(data.research.experimentalRuleStatus)}`,
-    `> ${cell(data.research.morningAutomation)}`,
+    `> **Research display only — not a go/no-go recommendation.** ${escapeDiscussionCell(data.research.experimentalRuleStatus)}`,
+    `> ${escapeDiscussionCell(data.research.morningAutomation)}`,
     '',
     '## Latest stored prediction',
     '',
     latestSummary,
     '',
-    `Average HRRR wind: **${cell(value(latestForecast.avgForecastWindMph, ' mph'))}** · Average lid: **${cell(value(latestForecast.avgLidM, ' m'))}** · Sample: **${cell(sample(latestForecast))}**`,
+    `Average HRRR wind: **${escapeDiscussionCell(value(latestForecast.avgForecastWindMph, ' mph'))}** · Average lid: **${escapeDiscussionCell(value(latestForecast.avgLidM, ' m'))}**`,
+    '',
+    `Prediction provenance: **${escapeDiscussionCell(latestForecast.predictionMode)}** · Experiment phase: **${escapeDiscussionCell(latestForecast.forecastPhase)}**`,
     '',
     stale
-      ? `> [!WARNING]\n> Soda archive is stale: latest observation day is ${cell(soda?.latestDate)} (${cell(soda?.lagDays)} days behind).`
-      : `Soda observations through **${cell(soda?.latestDate)}**.`,
+      ? `> [!WARNING]\n> Soda archive is stale: latest observation day is ${escapeDiscussionCell(soda?.latestDate)} (${escapeDiscussionCell(soda?.lagDays)} days behind).`
+      : `Soda observations through **${escapeDiscussionCell(soda?.latestDate)}**.`,
     '',
     `Data last changed **${sourceUpdatedAt ? DENVER_TIME.format(sourceUpdatedAt) : 'unknown'}** (America/Denver).`,
     '',
     '## Rolling 14-day record',
     '',
-    `| Date / sample | Call | Chance | Session outcome | Flow mechanism | Minutes ≥${REPORT_THRESHOLD_MPH} | Minutes ≥12 | Gust support | HRRR wind | Lid |`,
-    '|---|---|---:|---|---|---:|---:|---|---:|---:|',
+    `| Date | Prediction provenance | Experiment phase | Call | Chance | Session outcome | Flow mechanism | Minutes ≥${REPORT_THRESHOLD_MPH} | Minutes ≥12 | Gust support | HRRR wind | Lid |`,
+    '|---|---|---|---|---:|---|---|---:|---:|---|---:|---:|',
     ...rows.map((row) => `| ${row} |`),
     '',
-    `<sub>Session outcome and both minutes columns are gate-conditioned through sunrise +3 hours; data gaps break a run. “sustained” retains the strict ≥${REPORT_THRESHOLD_MPH} mph for 30 continuous minutes target. “gust-driven/canoe” means the strict target failed but ≥12 mph held for 30 continuous minutes; gust support describes that best ≥12 run and does not redefine it. Flow mechanism is a separate exploratory full-morning classification; “unknown” is uncertainty, not calm wind. An em dash means the outcome is unavailable. “forward” means stored before the observed morning; “retrospective” means backfilled after it. Forward holdout began ${FORWARD_HOLDOUT_START}. Chance still predicts only the strict sustained target and is an unvalidated, rounded research estimate—not a calibrated product probability.</sub>`,
+    '## How each field is calculated',
     '',
-    `Model: \`${cell(model?.modelVersion)}\` · trained through ${cell(model?.trainedThrough)} · ${cell(model?.trainingPairs)} training mornings.`,
+    '| Field | Source and window | Calculation and interpretation |',
+    '|---|---|---|',
+    ...fieldRows,
+    '',
+    '## How flow mechanism is classified',
+    '',
+    '> [!IMPORTANT]',
+    '> This is an exploratory after-the-fact classification of the completed morning, not an input to the call or chance.',
+    '',
+    '### Required evidence and event shapes',
+    '',
+    '| Component | `flow-class-v1` rule |',
+    '|---|---|',
+    ...prerequisiteRows,
+    '',
+    '### Pre-sunrise structure score',
+    '',
+    '| Component | Score rule |',
+    '|---|---|',
+    ...structureRows,
+    '',
+    '### Category precedence',
+    '',
+    '| Value | Rule |',
+    '|---|---|',
+    ...flowRows,
+    '',
+    methodology.missingValues,
+    '',
+    `Model: \`${escapeDiscussionCell(model?.modelVersion)}\` · trained through ${escapeDiscussionCell(model?.trainedThrough)} · ${escapeDiscussionCell(model?.trainingPairs)} training mornings · forward holdout began ${FORWARD_HOLDOUT_START}.`,
     '',
     'This post is replaced automatically after the nightly forecast and afternoon outcome archive workflows.',
   ];
