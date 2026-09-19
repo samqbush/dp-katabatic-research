@@ -231,7 +231,7 @@ export function renderDashboardHtml(instanceId) {
     content.innerHTML = \`
       <section class="notice">
         <strong>Research display only — not a go/no-go recommendation.</strong>
-        GitHub Actions captures raw HRRR inputs around 7:30 p.m. and Soda observations the next
+        GitHub Actions captures raw HRRR inputs around 9:00 p.m. and Soda observations the next
         afternoon. It does not run <code>/dp-katabatic-check</code> at 5:00/5:30 a.m. and does not
         send an alarm. The call shown below is recomputed from the frozen rule that failed its
         historical safety test. Calls and chances are read from immutable, versioned prediction

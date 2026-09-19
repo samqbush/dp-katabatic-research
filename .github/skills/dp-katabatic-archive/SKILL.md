@@ -155,12 +155,12 @@ account's request-rate budget.
 ## When to run it
 
 **Daily is the target cadence**, driven by the Holfuy window rather than by Ecowitt — and the
-nightly workflow now covers that baseline. So the manual run is no longer the routine path; it is
+Cloudflare-dispatched workflow now covers that baseline. So the manual run is no longer the routine path; it is
 what you reach for when the schedule cannot be trusted or has not caught up yet:
 
 - **Archive status shows real lag** — anything past a day or two means the cron is not doing its
   job. Diagnose *and* fetch; do not just report the number.
-- **The user is back from travel** and wants the data caught up now rather than at 20:00 UTC.
+- **The user is back from travel** and wants the data caught up now rather than at 2:15 PM Denver.
 - **Before any question that leans on the data** ("what's the best month", "how often does
   September work"), so the answer is not one silent cron failure out of date.
 - **Anything urgent involving Holfuy**, where waiting for the next scheduled run could cross the
@@ -238,7 +238,7 @@ it had n=8: fires 5 times, right 3, **missed zero sessions** against a 29.4% bas
 promising and it is **not** validation.
 
 **Those §8.1 figures are now behind the data.** The archive holds more Lookout days than the
-analysis was run on (17 days as of 2026-08-11), because the nightly workflow keeps collecting
+analysis was run on (17 days as of 2026-08-11), because the daily automation keeps collecting
 while §8.1 is written by hand. Quote §8.1 *with its 2026-08-02 date attached*, or re-run the
 analysis and report the fresh numbers — never present the old numbers as current, and never
 silently edit §8.1 to match a new run without redoing the analysis behind it. If asked what the ridge implies, give the current §8.1 numbers with the n
@@ -269,36 +269,38 @@ completed. Completeness is now judged by whether `fetched_at` is later than the 
 day, so partial days are re-fetched once and then settle. A day being re-fetched that looks like
 it was already there is this working as intended, not a bug.
 
-**Collection is automated as of 2026-08-10. Verify before you assert either way.** Two scheduled
-workflows run on `main`:
+**Collection is automated as of 2026-08-10. Verify before you assert either way.** One Cloudflare
+Cron Trigger runs every 15 minutes and dispatches GitHub Actions only at explicit Denver-local
+times:
 
-| Workflow | Cron (UTC) | What it records |
+| Workflow | Denver time | What it records |
 |---|---|---|
-| `.github/workflows/katabatic-archive.yml` | `0 20 * * *` | What actually **happened** — the same `katabatic-refresh.mjs` this skill runs, over a 14-day window |
-| `.github/workflows/katabatic-forecast.yml` | `30 1 * * *` | What the model **predicted** — the HRRR forecast for the coming morning |
+| `.github/workflows/archive-weather-observations.yml` | 2:15 PM | What actually **happened** — the same `katabatic-refresh.mjs` this skill runs, over a 14-day window, followed by a verified database dump |
+| `.github/workflows/collect-night-before-forecast.yml` | 9:00 and 9:15 PM | What the model **predicted** — the HRRR forecast for the coming morning, with an idempotent recovery attempt |
+| `.github/workflows/publish-research-snapshot.yml` | After collectors; 2:45 and 9:45 PM fallbacks | The read-only rolling research Discussion |
 
-The project accrues value only as matched forecast/outcome pairs, so both matter. Both take
-`workflow_dispatch`, and the archive job accepts a `days` input to widen the window after time
-away.
+The project accrues value only as matched forecast/outcome pairs, so both collectors matter. All
+three take `workflow_dispatch`, and the archive job accepts a `days` input to widen the window
+after time away. GitHub `workflow_run` is still the primary publisher trigger; its Cloudflare
+times are fallbacks.
 
 This became workable because the archive moved to Neon: a runner writes to the database and needs
-to commit nothing back. The earlier blocker — GitHub only fires `schedule` events on the
-**default branch**, while this research once lived on a `katabatic-research` branch — is gone now
-that the work is on `main`.
+to commit nothing back. Cloudflare owns the clock, but GitHub's dispatch API still requires each
+workflow definition on the **default branch**.
 
 **Automation does not mean unattended.** Check it rather than assuming, because a silently broken
 cron is worse than a known-manual one — it produces confident staleness. Confirm with:
 
 ```bash
-gh run list --workflow katabatic-archive.yml --limit 5
+gh run list --workflow archive-weather-observations.yml --limit 5
 ```
 
-Treat as suspect: any `failure`, or a gap where a nightly run simply did not appear. GitHub's
-scheduler also drifts, often by an hour or more, and drops runs entirely under load — so a late
-run is normal, a missing one is not. The Holfuy window is the thing that punishes you: it is
-~5.9 days wide with no backfill, so roughly **five consecutive skipped runs lose ridge data
-permanently.** If archive status shows Holfuy more than ~4 days behind, treat it as urgent and
-run the fetch by hand before anything else the user asked for — do not wait for the next cron.
+Treat as suspect: any `failure`, a non-`workflow_dispatch` clock-based run, or a gap where a daily
+run did not appear. Cloudflare is more reliable than GitHub's scheduler, but its deployment,
+token, or dispatch can still fail. The Holfuy window is the thing that punishes you: it is ~5.9
+days wide with no backfill, so roughly **five consecutive skipped runs lose ridge data
+permanently.** If archive status shows Holfuy more than ~4 days behind, treat it as urgent and run
+the fetch by hand before anything else the user asked for — do not wait for the next cron.
 
 Running the command by hand is still always safe and is the right move whenever the schedule is
 in doubt, since observations are immutable and re-runs are no-ops.

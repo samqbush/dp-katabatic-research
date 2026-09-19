@@ -41,7 +41,6 @@ Actions repository secrets:
 The GitHub token is uploaded to the Worker as the encrypted `GITHUB_DISPATCH_TOKEN` secret. Never
 put any secret value in this file or `wrangler.toml`.
 
-During the bootstrap phase, manually run **Deploy Cloudflare workflow scheduler** with
-**Test dispatch** enabled to validate the existing forecast workflow without touching forecast
-data. After the workflow-rename cutover lands, the deployment workflow expands this check to every
-target with `validate_only: true`.
+To verify a new or rotated GitHub token without touching weather data, Neon backups, artifacts, or
+the Discussion, manually run **Deploy Cloudflare workflow scheduler** with
+**Test dispatches** enabled. It invokes every target workflow with `validate_only: true`.

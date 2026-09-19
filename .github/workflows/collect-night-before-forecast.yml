@@ -1,4 +1,4 @@
-# Nightly capture of the 00Z HRRR forecast for the next morning at Soda Lakes.
+# Capture the 00Z HRRR forecast for the next morning at Soda Lakes.
 #
 # Per §3 of research/katabatic-prediction.md this ships NOTHING to the phone. It only accrues
 # forecast/outcome pairs, which is the one thing that cannot be bought with compute — it costs
@@ -6,18 +6,12 @@
 # existed before the outcome; the canvas only reads those immutable rows. §14 found no rule good
 # enough to act on, so these remain research evidence rather than a product recommendation.
 #
-# ⚠️ GitHub fires `schedule` and `workflow_dispatch` only for workflows on the DEFAULT branch.
-# On a research branch this file is inert. It becomes live when the research repo is created.
-name: Katabatic forecast archive
+# Cloudflare owns the clock schedule and invokes this workflow through workflow_dispatch. GitHub
+# only accepts API dispatches for workflow files on the default branch.
+name: Collect night-before forecast
+run-name: ${{ inputs.validate_only && 'Validate forecast workflow dispatch' || 'Collect night-before forecast' }}
 
 on:
-  schedule:
-    # 01:30 UTC = 19:30 MDT the previous evening. The 00Z run publishes ~00:50 UTC, so this is
-    # ~40 min after publication, and it is also roughly when the go/no-go decision gets made.
-    - cron: '37 1 * * *'
-    # Recovery for delayed Open-Meteo ingestion. Existing issued predictions are a green no-op.
-    # 04:00 UTC = 22:00 MDT / 21:00 MST the previous evening.
-    - cron: '17 4 * * *'
   workflow_dispatch:
     inputs:
       date:
@@ -55,7 +49,6 @@ jobs:
       - name: Collect forecast
         env:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
-          EVENT_NAME: ${{ github.event_name }}
           INPUT_DATE: ${{ inputs.date }}
           INPUT_FROM: ${{ inputs.from }}
           INPUT_TO: ${{ inputs.to }}
@@ -75,8 +68,6 @@ jobs:
           elif [ -n "$INPUT_FROM" ]; then
             node --no-warnings scripts/archive-hrrr-forecast.mjs \
               --from "$INPUT_FROM" --to "$INPUT_TO"
-          elif [ "$EVENT_NAME" = "schedule" ]; then
-            node --no-warnings scripts/archive-hrrr-forecast.mjs --date "$(date -u +%F)"
           else
             node --no-warnings scripts/archive-hrrr-forecast.mjs
           fi

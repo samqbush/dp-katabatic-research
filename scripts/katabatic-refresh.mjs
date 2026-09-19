@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Weekly katabatic archive refresh — one command for the whole ritual.
+ * Daily katabatic archive refresh — one command for the whole ritual.
  *
  * This exists because the research archive is a *perishable* asset. Ecowitt keeps 5-minute
  * history for roughly 90 days and downsamples anything older than about a year to 4-hour rows
@@ -10,13 +10,11 @@
  * Steps: report staleness -> archive missing days -> re-label -> re-score -> summarise what
  * changed. Safe to run as often as you like; the archiver is idempotent.
  *
- * This also runs nightly in CI (`.github/workflows/katabatic-archive.yml`). It once carried a
- * note that it *deliberately* replaced a scheduled workflow, because the research lived on an
- * unpushed branch and a job that commits and pushes would have been actively wrong. Both halves
- * of that reasoning are gone: the research has its own repository with a default branch (which
- * is what GitHub requires to fire a schedule at all), and the archive writes to Neon rather than
- * to files, so nothing needs to be committed. Running it by hand meant the Holfuy window — ~5.9
- * days, no backfill — depended on somebody remembering.
+ * This also runs daily in CI (`.github/workflows/archive-weather-observations.yml`). Cloudflare
+ * owns the clock schedule and calls GitHub's workflow_dispatch API; the workflow must exist on
+ * the default branch. The archive writes to Neon rather than files, so nothing needs to be
+ * committed. Running it only by hand would make the Holfuy window — ~5.9 days, no backfill —
+ * depend on somebody remembering.
  *
  *   node scripts/katabatic-refresh.mjs
  *   node scripts/katabatic-refresh.mjs --days 30     # wider catch-up after time away
