@@ -1,0 +1,16 @@
+# Keep this deployed service name stable during the forecast-to-repository scheduler migration.
+# Changing it would create a second Worker and leave the old cron active.
+name = "dp-katabatic-forecast-dispatcher"
+main = "src/index.js"
+compatibility_date = "2026-09-03"
+workers_dev = false
+
+[vars]
+GITHUB_OWNER = "samqbush"
+GITHUB_REPO = "dp-katabatic-research"
+GITHUB_REF = "main"
+
+[triggers]
+# Cloudflare cron is UTC. The Worker runs every 15 minutes but dispatches only the explicit
+# America/Denver schedule slots in src/index.js, which follows daylight-saving changes.
+crons = ["*/15 * * * *"]

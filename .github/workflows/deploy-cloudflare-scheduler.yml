@@ -1,16 +1,16 @@
-name: Deploy forecast dispatcher
+name: Deploy Cloudflare workflow scheduler
 
 on:
   push:
     branches:
       - main
     paths:
-      - cloudflare/forecast-dispatcher/**
-      - .github/workflows/deploy-forecast-dispatcher.yml
+      - cloudflare/workflow-scheduler/**
+      - .github/workflows/deploy-cloudflare-scheduler.yml
   workflow_dispatch:
     inputs:
       test_dispatch:
-        description: Invoke the validation-only forecast workflow to verify the GitHub token
+        description: Validate the legacy forecast workflow without reading or writing forecast data
         type: boolean
         default: false
 
@@ -27,19 +27,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Deploy Cloudflare Worker
+      - name: Deploy Cloudflare workflow scheduler
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: cloudflare/forecast-dispatcher
+          workingDirectory: cloudflare/workflow-scheduler
           command: deploy
           secrets: |
             GITHUB_DISPATCH_TOKEN
         env:
           GITHUB_DISPATCH_TOKEN: ${{ secrets.KATABATIC_GITHUB_DISPATCH_TOKEN }}
 
-      - name: Test GitHub workflow dispatch
+      - name: Validate GitHub workflow dispatch
         if: github.event_name == 'workflow_dispatch' && inputs.test_dispatch
         env:
           GITHUB_DISPATCH_TOKEN: ${{ secrets.KATABATIC_GITHUB_DISPATCH_TOKEN }}
