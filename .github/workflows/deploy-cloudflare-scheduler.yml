@@ -9,8 +9,8 @@ on:
       - .github/workflows/deploy-cloudflare-scheduler.yml
   workflow_dispatch:
     inputs:
-      test_dispatch:
-        description: Validate the legacy forecast workflow without reading or writing forecast data
+      test_dispatches:
+        description: Validate all scheduler target workflows without performing their real work
         type: boolean
         default: false
 
@@ -39,17 +39,24 @@ jobs:
         env:
           GITHUB_DISPATCH_TOKEN: ${{ secrets.KATABATIC_GITHUB_DISPATCH_TOKEN }}
 
-      - name: Validate GitHub workflow dispatch
-        if: github.event_name == 'workflow_dispatch' && inputs.test_dispatch
+      - name: Validate scheduler target dispatches
+        if: github.event_name == 'workflow_dispatch' && inputs.test_dispatches
         env:
           GITHUB_DISPATCH_TOKEN: ${{ secrets.KATABATIC_GITHUB_DISPATCH_TOKEN }}
         run: |
-          jq -nc '{ref:"main",inputs:{validate_only:"true"}}' |
-            curl --fail-with-body \
-              --request POST \
-              --header "Accept: application/vnd.github+json" \
-              --header "Authorization: Bearer $GITHUB_DISPATCH_TOKEN" \
-              --header "Content-Type: application/json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              --data-binary @- \
-              "https://api.github.com/repos/samqbush/dp-katabatic-research/actions/workflows/katabatic-forecast.yml/dispatches"
+          for workflow in \
+            collect-night-before-forecast.yml \
+            archive-weather-observations.yml \
+            publish-research-snapshot.yml
+          do
+            echo "Validating $workflow"
+            jq -nc '{ref:"main",inputs:{validate_only:"true"}}' |
+              curl --fail-with-body \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer $GITHUB_DISPATCH_TOKEN" \
+                --header "Content-Type: application/json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --data-binary @- \
+                "https://api.github.com/repos/samqbush/dp-katabatic-research/actions/workflows/$workflow/dispatches"
+          done

@@ -76,7 +76,7 @@ scripts/           archive jobs, backtest, and the shared libraries they share
 scripts/db/        Neon Postgres schema and migrations
 scripts/DEBUG-*    one-off analyses; each produced a section of the research log
 __tests__/         guard rails, mostly against lookahead leakage
-.github/workflows/ the two nightly jobs: forecast capture and archive refresh
+.github/workflows/ the collectors, publisher, and Cloudflare scheduler deployment
 ```
 
 ## Running it
@@ -88,15 +88,20 @@ npm run db:schema         # create tables
 npm run check             # tests, DST, timezone sweep, workflow lint
 ```
 
-Day to day, two data-collection jobs write to Neon:
+Day to day, Cloudflare Cron Triggers dispatch two data-collection workflows that write to Neon:
 
 | Workflow | When | What it records |
 |---|---|---|
-| `katabatic-forecast.yml` | 01:30 UTC | Raw HRRR inputs plus an immutable, versioned experimental call and success chance. |
-| `katabatic-archive.yml` | 20:00 UTC | Station observations and the derived rideable/not-rideable outcome. |
-| `katabatic-publish.yml` | After both jobs, with scheduled fallbacks | Replaces one pinned GitHub Discussion with the rolling 14-day research snapshot. |
+| `collect-night-before-forecast.yml` | 9:00 and 9:15 PM Denver | Raw HRRR inputs plus an immutable, versioned experimental call and success chance. |
+| `archive-weather-observations.yml` | 2:15 PM Denver | Station observations, the derived rideable/not-rideable outcome, and a verified database dump. |
+| `publish-research-snapshot.yml` | After both jobs, with 2:45/9:45 PM Denver fallbacks | Replaces one pinned GitHub Discussion with the rolling 14-day research snapshot. |
 
 Neither is useful alone. The project accrues value only as matched forecast/outcome pairs.
+
+All clock-based runs come from the single `*/15 * * * *` trigger in
+`cloudflare/workflow-scheduler/`. The Worker admits only the listed `America/Denver` times and
+dispatches GitHub Actions through `workflow_dispatch`. GitHub `workflow_run` remains the immediate
+publisher trigger after either collector completes.
 
 ### Public research snapshot
 
@@ -105,13 +110,14 @@ The latest stored predictions and outcomes are published to the pinned
 for quick phone access and sharing. The post is a read-only view of Neon data: it does not calculate
 calls, invoke the live wind meters, or send an alarm.
 
-The publisher runs after either collector completes and at 02:45/20:45 UTC as a fallback. It updates
-the configured Discussion only when the rendered body changed. `KATABATIC_DISCUSSION_NUMBER` must be
-set as an Actions repository variable; a missing variable, empty report, missing stored prediction,
-or mismatched Discussion title fails closed. `KATABATIC_DISCUSSIONS_TOKEN` is a repository secret
-containing a token with permission to update Discussions; GitHub's built-in workflow token cannot
-currently perform that GraphQL mutation. A `NEON_DATABASE_URL_RO` secret is preferred when a
-read-only Neon role is available, otherwise the existing `NEON_DATABASE_URL` secret is used.
+The publisher runs after either collector completes and at 2:45/9:45 PM Denver as a Cloudflare
+fallback. It updates the configured Discussion only when the rendered body changed.
+`KATABATIC_DISCUSSION_NUMBER` must be set as an Actions repository variable; a missing variable,
+empty report, missing stored prediction, or mismatched Discussion title fails closed.
+`KATABATIC_DISCUSSIONS_TOKEN` is a repository secret containing a token with permission to update
+Discussions; GitHub's built-in workflow token cannot currently perform that GraphQL mutation. A
+`NEON_DATABASE_URL_RO` secret is preferred when a read-only Neon role is available, otherwise the
+existing `NEON_DATABASE_URL` secret is used.
 
 To preview without changing GitHub:
 
@@ -119,8 +125,8 @@ To preview without changing GitHub:
 npm run publish:discussion:dry-run
 ```
 
-If GitHub disables scheduled workflows after prolonged public-repository inactivity, re-enable the
-workflows in the Actions tab and manually dispatch **Katabatic Discussion publisher** once.
+If a Cloudflare dispatch or scheduler deployment is missed, manually run
+**Publish katabatic research snapshot**. The manual and scheduled paths are idempotent.
 
 ### What is and is not automated
 

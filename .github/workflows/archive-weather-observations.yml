@@ -1,4 +1,4 @@
-# Nightly refresh of the katabatic research archive.
+# Refresh the katabatic research archive and create a verified database backup.
 #
 # The forecast job records what the model PREDICTED. This one records what actually HAPPENED.
 # Neither is worth anything alone — the project accrues value only as matched forecast/outcome
@@ -14,20 +14,21 @@
 #
 # Re-running is always safe: observations are immutable and inserted ON CONFLICT DO NOTHING, so
 # days are unioned by timestamp. Resolution only ever improves and no captured minute is dropped.
-name: Katabatic archive refresh
+# Cloudflare owns the clock schedule and invokes this workflow through workflow_dispatch.
+name: Archive weather observations and backup
+run-name: ${{ inputs.validate_only && 'Validate archive workflow dispatch' || 'Archive weather observations and backup' }}
 
 on:
-  schedule:
-    # 20:00 UTC = 14:00 MDT. Late enough that the katabatic morning (roughly 05:00–09:00 local)
-    # is complete and in the archive; the remainder of the day is picked up by tomorrow's run,
-    # which re-fetches a 14-day window anyway.
-    - cron: '17 20 * * *'
   workflow_dispatch:
     inputs:
       days:
         description: 'Lookback window in days (default 14; widen after time away)'
         required: false
         default: '14'
+      validate_only:
+        description: 'Validate workflow dispatch without reading or writing archive data'
+        type: boolean
+        default: false
 
 concurrency:
   group: katabatic-archive
@@ -47,7 +48,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --omit=dev --ignore-scripts
 
+      - name: Validate workflow dispatch
+        if: inputs.validate_only
+        run: echo "Workflow dispatch validated; archive refresh and backup intentionally skipped."
+
       - name: Refresh archive
+        if: ${{ !inputs.validate_only }}
         env:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           ECOWITT_RESEARCH_API_KEY: ${{ secrets.ECOWITT_RESEARCH_API_KEY }}
@@ -62,6 +68,7 @@ jobs:
       # this a rolling disaster-recovery window, NOT an archive: a dump older than 90 days is
       # deleted automatically. Long-term copies still have to be pulled down deliberately.
       - name: Install PostgreSQL client
+        if: ${{ !inputs.validate_only }}
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
@@ -78,7 +85,7 @@ jobs:
       # Runs even when the refresh step failed: archive-holfuy.mjs deliberately exits non-zero
       # after a partial write, and those already-written days are exactly what needs saving.
       - name: Back up archive
-        if: '!cancelled()'
+        if: ${{ !cancelled() && !inputs.validate_only }}
         env:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         # stations is dumped schema-only: its ecowitt_mac values come from the secrets above, and
@@ -93,7 +100,7 @@ jobs:
       # The versioned binary is deliberate: an older pg_restore rejects a newer dump, which would
       # make this step fail for a reason that has nothing to do with the dump's integrity.
       - name: Verify dump is restorable
-        if: '!cancelled()'
+        if: ${{ !cancelled() && !inputs.validate_only }}
         run: |
           dump=$(ls -1 "$RUNNER_TEMP/archive-backup"/*.dump | head -1)
           /usr/lib/postgresql/18/bin/pg_restore --list "$dump" > /tmp/toc.txt
@@ -106,7 +113,7 @@ jobs:
           echo "✅ $(basename "$dump") restorable, observations present, stations rows excluded"
 
       - name: Upload dump artifact
-        if: '!cancelled()'
+        if: ${{ !cancelled() && !inputs.validate_only }}
         uses: actions/upload-artifact@v7
         with:
           name: dp-archive-dump-${{ github.run_id }}

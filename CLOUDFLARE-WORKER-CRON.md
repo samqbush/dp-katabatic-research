@@ -452,21 +452,25 @@ In GitHub:
 
 The katabatic repository uses these files:
 
-- `cloudflare/forecast-dispatcher/src/index.js` contains the cron handler and
-  GitHub REST request.
-- `cloudflare/forecast-dispatcher/wrangler.toml` contains the Worker name,
-  repository/workflow variables, and Cron Triggers.
-- `.github/workflows/deploy-forecast-dispatcher.yml` deploys the Worker and
+- `cloudflare/workflow-scheduler/src/index.js` contains the Denver-local
+  schedule table and GitHub REST request.
+- `cloudflare/workflow-scheduler/wrangler.toml` contains the existing deployed
+  Worker service name, repository/ref variables, and one Cron Trigger.
+- `.github/workflows/deploy-cloudflare-scheduler.yml` deploys the Worker and
   installs its encrypted GitHub token.
-- `.github/workflows/katabatic-forecast.yml` accepts `workflow_dispatch` and a
-  safe `validate_only` input.
-- `__tests__/utils/forecastDispatcher.test.js` verifies DST admission, the API
-  request, and explicit failure when GitHub rejects the request.
+- `.github/workflows/collect-night-before-forecast.yml`,
+  `.github/workflows/archive-weather-observations.yml`, and
+  `.github/workflows/publish-research-snapshot.yml` accept `workflow_dispatch`
+  and a safe `validate_only` input.
+- `__tests__/utils/workflowScheduler.test.js` verifies MDT/MST admission,
+  target/name contracts, API payloads, and explicit failure when GitHub rejects
+  a request.
 
-The production schedule registers 03:00/03:15 UTC and 04:00/04:15 UTC. The
-Worker admits only 9:00/9:15 PM in `America/Denver`. The second call is safe
-because issued forecast predictions are immutable and duplicate issuance is a
-no-op.
+The production Worker has one `*/15 * * * *` trigger and admits only 2:15,
+2:45, 9:00, 9:15, and 9:45 PM in `America/Denver`. This stays below the Workers
+Free limit of five Cron Triggers per account and follows daylight-saving changes
+without paired UTC expressions. The 9:15 forecast call is safe because issued
+predictions are immutable and duplicate issuance is a no-op.
 
 The Worker has `workers_dev = false`, so it is cron-only and does not expose a
 public Worker URL.
@@ -525,16 +529,16 @@ GitHub and Cloudflare do not let you recover an existing secret's value:
 
 ### 4. Copy and customize the Worker
 
-Copy this repository's `cloudflare/forecast-dispatcher` directory into the new
+Copy this repository's `cloudflare/workflow-scheduler` directory into the new
 repository, then change:
 
 1. The Worker `name`.
 2. `GITHUB_OWNER`.
 3. `GITHUB_REPO`.
-4. `GITHUB_WORKFLOW`.
-5. `GITHUB_REF`, if the default branch is not `main`.
-6. The UTC cron expressions.
-7. The time zone and local-time admission check in `src/index.js`.
+4. `GITHUB_REF`, if the default branch is not `main`.
+5. The workflow filenames in `src/index.js`.
+6. The UTC cron expression.
+7. The time zone and local-time admission table in `src/index.js`.
 
 For a new project, converting `wrangler.toml` to `wrangler.jsonc` is optional
 but follows Cloudflare's current recommendation.
@@ -578,7 +582,7 @@ Allow up to 15 minutes for each Cron Trigger change to propagate.
 Manual Wrangler deployment is sufficient. If you want future Worker code and
 cron changes to deploy when merged:
 
-1. Copy `.github/workflows/deploy-forecast-dispatcher.yml` into the new
+1. Copy `.github/workflows/deploy-cloudflare-scheduler.yml` into the new
    repository.
 2. Change its path filters, `workingDirectory`, workflow name, concurrency
    group, and GitHub dispatch secret name.
@@ -608,4 +612,3 @@ After several successful Cloudflare-triggered runs:
 3. Record the Worker name, local schedule, UTC trigger hours, token expiration,
    and owner in the repository's operational documentation.
 4. Add a reminder to rotate the GitHub dispatch token before it expires.
-

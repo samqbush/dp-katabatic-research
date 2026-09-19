@@ -1,4 +1,6 @@
 import { jest } from '@jest/globals';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   dispatchWorkflow,
   getScheduledDispatch,
@@ -14,6 +16,13 @@ const ENV = {
   GITHUB_REF: 'main',
   GITHUB_DISPATCH_TOKEN: 'test-token',
 };
+
+const WORKFLOW_DIR = path.join(process.cwd(), '.github', 'workflows');
+
+function topLevelName(filename) {
+  const source = fs.readFileSync(path.join(WORKFLOW_DIR, filename), 'utf8');
+  return source.match(/^name:\s*(.+)$/m)?.[1];
+}
 
 describe('Cloudflare workflow scheduler', () => {
   it.each([
@@ -106,23 +115,21 @@ describe('Cloudflare workflow scheduler', () => {
     expect(request.mock.calls[1][0]).toContain(`/${LEGACY_WORKFLOWS.forecast}/dispatches`);
   });
 
-  it('supports validation-only dispatch for the legacy forecast workflow', async () => {
-    const request = jest.fn().mockResolvedValue({ ok: true });
+  it.each(Object.values(WORKFLOWS))(
+    'supports validation-only dispatch for %s',
+    async (workflow) => {
+      const request = jest.fn().mockResolvedValue({ ok: true });
 
-    await dispatchWorkflow(
-      ENV,
-      LEGACY_WORKFLOWS.forecast,
-      { validate_only: 'true' },
-      request,
-    );
+      await dispatchWorkflow(ENV, workflow, { validate_only: 'true' }, request);
 
-    expect(request).toHaveBeenCalledWith(
-      expect.stringContaining(`/${LEGACY_WORKFLOWS.forecast}/dispatches`),
-      expect.objectContaining({
-        body: '{"ref":"main","inputs":{"validate_only":"true"}}',
-      }),
-    );
-  });
+      expect(request).toHaveBeenCalledWith(
+        expect.stringContaining(`/${workflow}/dispatches`),
+        expect.objectContaining({
+          body: '{"ref":"main","inputs":{"validate_only":"true"}}',
+        }),
+      );
+    },
+  );
 
   it('fails loudly when GitHub rejects a dispatch', async () => {
     const request = jest.fn().mockResolvedValue({
@@ -139,5 +146,43 @@ describe('Cloudflare workflow scheduler', () => {
     )).rejects.toThrow(
       `GitHub workflow dispatch failed for ${WORKFLOWS.forecast}: 403 forbidden`,
     );
+  });
+
+  it('targets workflow files that exist', () => {
+    for (const workflow of Object.values(WORKFLOWS)) {
+      expect(fs.existsSync(path.join(WORKFLOW_DIR, workflow))).toBe(true);
+    }
+  });
+
+  it('keeps publisher workflow_run names aligned with producer display names', () => {
+    const publisher = fs.readFileSync(
+      path.join(WORKFLOW_DIR, WORKFLOWS.publish),
+      'utf8',
+    );
+
+    expect(publisher).toContain(`      - ${topLevelName(WORKFLOWS.forecast)}`);
+    expect(publisher).toContain(`      - ${topLevelName(WORKFLOWS.archive)}`);
+  });
+
+  it('prevents validation-only producers from cascading into publication', () => {
+    const forecast = fs.readFileSync(
+      path.join(WORKFLOW_DIR, WORKFLOWS.forecast),
+      'utf8',
+    );
+    const archive = fs.readFileSync(
+      path.join(WORKFLOW_DIR, WORKFLOWS.archive),
+      'utf8',
+    );
+    const publisher = fs.readFileSync(
+      path.join(WORKFLOW_DIR, WORKFLOWS.publish),
+      'utf8',
+    );
+
+    expect(forecast).toContain("run-name: ${{ inputs.validate_only && 'Validate ");
+    expect(archive).toContain("run-name: ${{ inputs.validate_only && 'Validate ");
+    expect(publisher).toContain(
+      "!startsWith(github.event.workflow_run.display_title, 'Validate ')",
+    );
+    expect(publisher).toContain('katabatic-discussion-publisher-validation');
   });
 });
