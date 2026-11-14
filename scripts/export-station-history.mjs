@@ -16,13 +16,14 @@ function isoDay(date) {
 }
 
 function parseArgs(argv) {
-  const args = { station: SODA_SLUG, from: null, to: null, out: null };
+  const args = { station: SODA_SLUG, from: null, to: null, out: null, noClobber: false };
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     if (argv[i] === '--station' && next) args.station = next;
     if (argv[i] === '--from' && next) args.from = next;
     if (argv[i] === '--to' && next) args.to = next;
     if (argv[i] === '--out' && next) args.out = next;
+    if (argv[i] === '--no-clobber') args.noClobber = true;
   }
   return args;
 }
@@ -30,14 +31,16 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const station = stationBySlugOrName(args.station);
-  const days = await readDays(station.slug, { from: args.from, to: args.to });
+  const days = await readDays(station.slug, {
+    from: args.from, to: args.to, consistentSnapshot: true,
+  });
   if (!days.length) throw new Error(`No archived days found for ${station.name}.`);
 
   const output = resolve(
     args.out || `${station.slug.replace(/^dp-/, '')}-history-${isoDay(todayAtStation())}.csv`
   );
   const csv = renderStationHistoryCsv(days);
-  await writeFile(output, csv, 'utf8');
+  await writeFile(output, csv, { encoding: 'utf8', flag: args.noClobber ? 'wx' : 'w' });
 
   const rows = stationHistoryRows(days);
   const observationRows = rows.filter((row) => row.observation_epoch_seconds !== undefined);

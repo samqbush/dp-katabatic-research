@@ -8,7 +8,7 @@ jest.unstable_mockModule('@/scripts/lib/db.mjs', () => ({
   closePool: jest.fn(),
 }));
 
-const { enrichObservationPressure } = await import('@/scripts/lib/archive-store.mjs');
+const { enrichObservationPressure, readDays } = await import('@/scripts/lib/archive-store.mjs');
 
 describe('pressure enrichment storage', () => {
   beforeEach(() => {
@@ -21,6 +21,51 @@ describe('pressure enrichment storage', () => {
         rows: [{ total: 2, pressure_count: 1, complete_count: 1 }],
       })
       .mockResolvedValueOnce({ rowCount: 1 });
+  });
+
+  describe('consistent archive reads', () => {
+    it('reads day metadata and observations in one repeatable-read transaction', async () => {
+      client.query.mockReset();
+      client.query
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({
+          rows: [{
+            local_date: '2026-09-01',
+            fetched_at: '2026-09-02T20:00:00Z',
+            status: 'ok',
+            cycle_type: '1min',
+            point_count: 1,
+          }],
+        })
+        .mockResolvedValueOnce({
+          rows: [{
+            local_date: '2026-09-01',
+            ts: '2026-09-01T12:00:00Z',
+            speed: 12,
+            gust: 18,
+            dir: 270,
+            temp: 50,
+            rh: 40,
+            solar: 10,
+          }],
+        });
+
+      const days = await readDays('lookout-mtn', {
+        from: '2026-09-01',
+        to: '2026-09-01',
+        consistentSnapshot: true,
+      });
+
+      expect(client.query).toHaveBeenNthCalledWith(
+        1, 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
+      );
+      expect(client.query.mock.calls[1][0]).toContain('FROM station_days');
+      expect(client.query.mock.calls[2][0]).toContain('FROM observations');
+      expect(days).toHaveLength(1);
+      expect(days[0].point_count).toBe(1);
+      expect(days[0].points).toHaveLength(1);
+      expect(days[0].points[0].speed).toBe(12);
+    });
   });
 
   it('fills pressure only and records partial retrospective coverage atomically', async () => {

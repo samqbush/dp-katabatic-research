@@ -1,0 +1,44 @@
+{
+  "skill_name": "dp-soda-history-export",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need to send Alex all of the Soda Lake station data we have. Create a CSV dump of the complete archive.",
+      "expected_output": "A verified, non-empty CSV containing the complete archived DP Soda Lakes history, saved to the requested evaluation output directory.",
+      "files": [],
+      "expectations": [
+        "Exactly one non-empty CSV artifact is created and every data row identifies the station as DP Soda Lakes.",
+        "The CSV header exactly matches the 22 repository-owned STATION_HISTORY_COLUMNS in order.",
+        "The export uses scripts/export-station-history.mjs through the supported export:history command with station dp-soda-lakes and no date bounds.",
+        "The complete-history CSV contains at least one observation row and at least one metadata-only day row with blank observation fields.",
+        "The result reports the actual archived date span and observation versus metadata-only row counts without refreshing or modifying the archive."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Export the Soda Lakes database history from 2026-08-01 through 2026-08-31 as a CSV. I only want that date range.",
+      "expected_output": "A verified CSV whose non-empty local_date values are all within the inclusive August 2026 range.",
+      "files": [],
+      "expectations": [
+        "Exactly one non-empty CSV artifact is created and every data row identifies the station as DP Soda Lakes.",
+        "The CSV header exactly matches the 22 repository-owned STATION_HISTORY_COLUMNS in order.",
+        "The supported exporter is run with station dp-soda-lakes, from 2026-08-01, and to 2026-08-31.",
+        "Every non-empty local_date value is within the inclusive requested range and both 2026-08-01 and 2026-08-31 are present.",
+        "The result reports the exported span and row counts without refreshing or modifying the archive."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Make me a Soda Lake CSV for 2035-01-01 through 2035-01-03. If there is no archived data, do not give me an empty file and do not pretend it worked.",
+      "expected_output": "A clear no-data failure with no CSV artifact created.",
+      "files": [],
+      "expectations": [
+        "No CSV artifact is created for the no-data range.",
+        "The supported exporter is run with station dp-soda-lakes and the inclusive 2035-01-01 through 2035-01-03 bounds.",
+        "The exporter exits non-zero and reports that no archived days were found for DP Soda Lakes.",
+        "The result clearly presents the outcome as a failure or no-data result and does not claim a successful export.",
+        "The run does not refresh, backfill, or modify the archive."
+      ]
+    }
+  ]
+}

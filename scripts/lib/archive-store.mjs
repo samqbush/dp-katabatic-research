@@ -489,7 +489,7 @@ export async function readDay(slug, date) {
  * Bulk read. Reading 877 days one query at a time is an N+1 round trip to a remote database;
  * the consumers walk the whole archive, so give them one query instead.
  */
-export async function readDays(slug, { from, to } = {}) {
+export async function readDays(slug, { from, to, consistentSnapshot = false } = {}) {
   const stationRow = await getStation(slug);
 
   const clauses = ['station_slug = $1'];
@@ -497,26 +497,34 @@ export async function readDays(slug, { from, to } = {}) {
   if (from) clauses.push(`local_date >= $${params.push(from)}`);
   if (to) clauses.push(`local_date <= $${params.push(to)}`);
 
-  const { rows: dayRows } = await query(
-    `SELECT * FROM station_days WHERE ${clauses.join(' AND ')} ORDER BY local_date`,
-    params
-  );
-  if (!dayRows.length) return [];
+  const load = async (execute) => {
+    const { rows: dayRows } = await execute(
+      `SELECT * FROM station_days WHERE ${clauses.join(' AND ')} ORDER BY local_date`,
+      params
+    );
+    if (!dayRows.length) return { dayRows, obsRows: [] };
 
-  const { rows: obsRows } = await query(
-    `SELECT *, (ts AT TIME ZONE '${STATION_TZ}')::date AS local_date
-       FROM observations
-      WHERE station_slug = $1
-        AND (ts AT TIME ZONE '${STATION_TZ}')::date >= $2
-        AND (ts AT TIME ZONE '${STATION_TZ}')::date <= $3
-      ORDER BY ts`,
-    [
-      stationRow.slug,
-      isoDay(dayRows[0].local_date),
-      isoDay(dayRows[dayRows.length - 1].local_date),
-    ]
-  );
-
+    const { rows: obsRows } = await execute(
+      `SELECT *, (ts AT TIME ZONE '${STATION_TZ}')::date AS local_date
+         FROM observations
+        WHERE station_slug = $1
+          AND (ts AT TIME ZONE '${STATION_TZ}')::date >= $2
+          AND (ts AT TIME ZONE '${STATION_TZ}')::date <= $3
+        ORDER BY ts`,
+      [
+        stationRow.slug,
+        isoDay(dayRows[0].local_date),
+        isoDay(dayRows[dayRows.length - 1].local_date),
+      ]
+    );
+    return { dayRows, obsRows };
+  };
+  const { dayRows, obsRows } = consistentSnapshot
+    ? await withTransaction(async (client) => {
+        await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+        return load((text, values) => client.query(text, values));
+      })
+    : await load(query);
   const byDay = new Map();
   for (const r of obsRows) {
     const key = isoDay(r.local_date);
