@@ -15,7 +15,7 @@
  *     across 11-35 h), so there is no reason to chase ever-fresher runs.
  *
  * Run mapping: run `<D>T00:00` is 00Z on D, which begins at local 18:00 on D-1. The morning of D
- * at local 05-08 is therefore f11-f14 — the forecast actually in hand at an 8 p.m. decision.
+ * at local 05-11 is therefore f11-f17 — the forecast actually in hand at an 8 p.m. decision.
  *
  * Usage:
  *   node scripts/archive-hrrr-forecast.mjs                 # tomorrow's morning (nightly default)
@@ -24,7 +24,17 @@
  */
 
 import { query, closePool } from './lib/db.mjs';
-import { collectHrrrMorning, fetchHrrrMorning } from './lib/hrrr-forecast.mjs';
+import {
+  collectHrrrMorning,
+  fetchHrrrMorning,
+  HRRR_CAPTURE_HOURS,
+  nightBeforeGenerationMode,
+} from './lib/hrrr-forecast.mjs';
+import {
+  EXPERIMENTAL_PROBABILITY_MODEL_V1,
+  EXPERIMENTAL_PROBABILITY_MODEL_V2,
+  summarizeGateAlignedForecastRows,
+} from './lib/night-before-call.mjs';
 import {
   findNightBeforePrediction,
   persistNightBeforePrediction,
@@ -43,10 +53,10 @@ function arg(name) {
 
 /** Station-local (America/Denver) calendar date, offset by `days`. Never the laptop's zone. */
 function localDate(days = 0) {
-  const now = new Date(Date.now() + days * 86400000);
-  return new Intl.DateTimeFormat('en-CA', {
+  const today = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(now);
+  }).format(new Date());
+  return shift(today, days);
 }
 
 function shift(iso, n) {
@@ -84,10 +94,9 @@ async function loadStored(date) {
      WHERE station_slug = $1
        AND local_date = $2
        AND run_init = $3
-       AND lid_m IS NOT NULL
-       AND wind_mph IS NOT NULL
+       AND valid_hour_local = ANY($4::int[])
      ORDER BY valid_hour_local`,
-    [SLUG, date, runInit],
+    [SLUG, date, runInit, HRRR_CAPTURE_HOURS],
   );
   return rows;
 }
@@ -98,8 +107,7 @@ const from = arg('from');
 const to = arg('to');
 const one = arg('date');
 const requestedMode = arg('mode');
-const generationMode = requestedMode || (from && to ? 'retrospective' : 'forward');
-if (!['forward', 'retrospective'].includes(generationMode)) {
+if (requestedMode && !['forward', 'retrospective'].includes(requestedMode)) {
   throw new Error('--mode must be "forward" or "retrospective"');
 }
 
@@ -116,27 +124,72 @@ if (from && to) {
 
 console.log(`HRRR forecast collector — ${targets.length} morning(s), station ${SLUG}`);
 
-let written = 0, alreadyIssued = 0, skipped = 0;
+let written = 0, alreadyIssued = 0, skipped = 0, incomplete = 0;
 for (const date of targets) {
   const runInit = `${date}T00:00:00Z`;
+  const generationMode = nightBeforeGenerationMode(
+    date,
+    requestedMode || (from && to ? 'retrospective' : null),
+  );
+  let legacyPrediction = null;
+  let candidatePrediction = null;
+  const month = Number(date.slice(5, 7));
+  const needsCandidate = month >= 3 && month <= 10
+    && date > EXPERIMENTAL_PROBABILITY_MODEL_V2.trainedThrough;
   const result = await collectHrrrMorning({
     date,
     generationMode,
-    findIssuedPrediction: () => findNightBeforePrediction({
-      stationSlug: SLUG,
-      localDate: date,
-      runInit,
-    }),
+    findIssuedPrediction: async () => {
+      legacyPrediction = await findNightBeforePrediction({
+        stationSlug: SLUG,
+        localDate: date,
+        runInit,
+        modelVersion: EXPERIMENTAL_PROBABILITY_MODEL_V1.modelVersion,
+      });
+      if (!needsCandidate) return legacyPrediction;
+      candidatePrediction = await findNightBeforePrediction({
+        stationSlug: SLUG,
+        localDate: date,
+        runInit,
+        modelVersion: EXPERIMENTAL_PROBABILITY_MODEL_V2.modelVersion,
+      });
+      return legacyPrediction && candidatePrediction ? legacyPrediction : null;
+    },
     loadStoredRows: () => loadStored(date),
     storeRows: (rows) => store(date, rows),
-    persistRows: (rows) => persistNightBeforePrediction({
-      stationSlug: SLUG,
-      localDate: date,
-      runInit,
-      generationMode,
-      forecast: summarizeForecastRows(rows),
-    }),
+    persistRows: async (rows) => {
+      const legacyRows = rows.filter((row) => row.hr >= 5 && row.hr <= 8);
+      const prediction = legacyPrediction || await persistNightBeforePrediction({
+        stationSlug: SLUG,
+        localDate: date,
+        runInit,
+        generationMode: nightBeforeGenerationMode(
+          date, generationMode === 'retrospective' ? 'retrospective' : null,
+        ),
+        forecast: summarizeForecastRows(legacyRows),
+        model: EXPERIMENTAL_PROBABILITY_MODEL_V1,
+      });
+      const candidateForecast = needsCandidate && summarizeGateAlignedForecastRows(rows, date);
+      if (
+        needsCandidate && !candidatePrediction && candidateForecast
+        && new Date() >= new Date(EXPERIMENTAL_PROBABILITY_MODEL_V2.createdAt)
+      ) {
+        candidatePrediction = await persistNightBeforePrediction({
+          stationSlug: SLUG,
+          localDate: date,
+          runInit,
+          generationMode: nightBeforeGenerationMode(
+            date, generationMode === 'retrospective' ? 'retrospective' : null,
+          ),
+          forecast: candidateForecast,
+          model: EXPERIMENTAL_PROBABILITY_MODEL_V2,
+        });
+      }
+      return prediction;
+    },
     fetchMorning: fetchHrrrMorning,
+    minimumUsableHours: HRRR_CAPTURE_HOURS.length,
+    requiredCaptureHours: HRRR_CAPTURE_HOURS,
   });
 
   if (result.status === 'already-issued') {
@@ -148,17 +201,31 @@ for (const date of targets) {
   }
   if (result.status === 'unresolved') {
     skipped++;
+    console.error(`  ${date}: no usable v1 forecast; available raw hours were preserved`);
     continue;
   }
 
   const { rows, prediction } = result;
-  written++;
+  if (result.status === 'incomplete') {
+    incomplete++;
+    const completeHours = rows.filter((row) => row.lid != null && row.wind != null).length;
+    console.error(`  ${date}: only ${completeHours}/${HRRR_CAPTURE_HOURS.length} complete pairs; retry needed`);
+  } else {
+    written++;
+  }
   const lid = rows.map((r) => (Number.isFinite(r.lid) ? r.lid.toFixed(0) : '—')).join('/');
   console.log(`  ${date}: ${rows.length} hours, lid ${lid} m`);
   console.log(
     `             ${prediction.call}, ${prediction.success_chance_percent}% success ` +
     `(${prediction.model_version}, ${prediction.generation_mode}, ${result.source})`,
   );
+  if (candidatePrediction) {
+    console.log(
+      `             shadow ${candidatePrediction.call}, ` +
+      `${candidatePrediction.success_chance_percent}% ` +
+      `(${candidatePrediction.model_version})`,
+    );
+  }
   if (targets.length > 1) await sleep(220);
 }
 
@@ -166,7 +233,7 @@ const { rows: total } = await query(
   'SELECT count(*)::int AS n, count(DISTINCT local_date)::int AS days FROM hrrr_forecasts WHERE station_slug = $1',
   [SLUG],
 );
-console.log(`\nwritten ${written}, already issued ${alreadyIssued}, skipped ${skipped}`);
+console.log(`\nwritten ${written}, already issued ${alreadyIssued}, incomplete ${incomplete}, skipped ${skipped}`);
 console.log(`archive now holds ${total[0].n} rows across ${total[0].days} mornings`);
 
 await closePool();
@@ -174,10 +241,10 @@ await closePool();
 // A run that captures nothing must FAIL, not pass quietly. Per §4.2 a morning that is not
 // captured is gone for good, so a silently green no-op is the worst possible outcome: it looks
 // like the archive is accruing when it is not, and the gap is only discovered a season later.
-if (written === 0 && alreadyIssued === 0) {
+if (incomplete > 0 || skipped > 0 || (written === 0 && alreadyIssued === 0)) {
   console.error(
-    '\n❌ No usable 00Z snapshot was captured or already issued.\n' +
-    '   Keep this run red; the later recovery schedule may still capture it before the outcome.',
+    '\n❌ Forecast capture is incomplete.\n' +
+    '   Available raw hours and issued predictions were preserved; retry the missing hours.',
   );
   process.exit(1);
 }

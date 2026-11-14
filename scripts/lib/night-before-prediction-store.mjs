@@ -4,7 +4,7 @@ import {
   EXPERIMENTAL_PROBABILITY_MODEL_V1,
 } from './night-before-call.mjs';
 
-let modelRegistered = false;
+const registeredModels = new Set();
 
 const average = (values) => (
   values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
@@ -46,9 +46,8 @@ export async function findNightBeforePrediction({
   return rows[0] ?? null;
 }
 
-async function registerModel() {
-  if (modelRegistered) return;
-  const model = EXPERIMENTAL_PROBABILITY_MODEL_V1;
+async function registerModel(model) {
+  if (registeredModels.has(model.modelVersion)) return;
   const parameters = {
     windMean: model.windMean,
     windSd: model.windSd,
@@ -57,6 +56,8 @@ async function registerModel() {
     weights: model.weights,
     displayRoundingPercent: 5,
     displayCapPercent: [5, 95],
+    ...(model.forecastWindow ? { forecastWindow: model.forecastWindow } : {}),
+    ...(model.trainingPeriod ? { trainingPeriod: model.trainingPeriod } : {}),
   };
 
   await query(
@@ -78,7 +79,7 @@ async function registerModel() {
       JSON.stringify(parameters),
     ],
   );
-  modelRegistered = true;
+  registeredModels.add(model.modelVersion);
 }
 
 function samePrediction(existing, expected) {
@@ -100,15 +101,16 @@ export async function persistNightBeforePrediction({
   runInit,
   forecast,
   generationMode,
+  model = EXPERIMENTAL_PROBABILITY_MODEL_V1,
   generatedAt = new Date().toISOString(),
 }) {
   if (!['forward', 'retrospective'].includes(generationMode)) {
     throw new Error(`Invalid prediction generation mode: ${generationMode}`);
   }
 
-  const prediction = buildExperimentalNightBeforePrediction(forecast);
+  const prediction = buildExperimentalNightBeforePrediction(forecast, model);
   if (!prediction) return null;
-  await registerModel();
+  await registerModel(model);
 
   const expected = {
     ...prediction,

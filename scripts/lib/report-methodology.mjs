@@ -113,10 +113,16 @@ export function buildReportMethodology({
           'The local morning date shared by the stored HRRR run, issued prediction, and archived observations.',
       },
       {
+        name: 'Gate opens',
+        sourceWindow: 'Bear Creek Lake Park seasonal hours in America/Denver.',
+        calculation:
+          '6:00 a.m. May-Sep, 7:00 a.m. Mar/Apr/Oct, and 8:00 a.m. Nov-Feb. The outcome excludes wind before this time.',
+      },
+      {
         name: 'Prediction provenance',
         sourceWindow: 'Immutable night_before_predictions.generation_mode.',
         calculation:
-          '`forward` is the collector mode used for a normal single-date capture; `retrospective` is the explicit/range backfill mode. This is row provenance, not proof inferred from the observation timestamps.',
+          '`forward` requires issuance before the forecast date starts in Denver and after the 00Z run begins; past-date and explicit/range backfills are `retrospective`. This is row provenance, not proof inferred from observation timestamps.',
       },
       {
         name: 'Experiment phase',

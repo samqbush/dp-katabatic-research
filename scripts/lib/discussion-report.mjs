@@ -92,6 +92,11 @@ export function renderDiscussionReport(data) {
 
   const rows = data.recent.map((day) => [
     escapeDiscussionCell(day.date),
+    escapeDiscussionCell(
+      day.gateOpenHour === null || day.gateOpenHour === undefined
+        ? null
+        : `${day.gateOpenHour}:00 a.m.`,
+    ),
     escapeDiscussionCell(day.predictionMode),
     escapeDiscussionCell(day.forecastPhase),
     escapeDiscussionCell(day.forecastCall ?? 'No call'),
@@ -151,8 +156,8 @@ export function renderDiscussionReport(data) {
     '',
     '## Rolling 14-day record',
     '',
-    `| Date | Prediction provenance | Experiment phase | Call | Chance | Session outcome | Flow mechanism | Minutes ≥${REPORT_THRESHOLD_MPH} | Minutes ≥12 | Gust support | HRRR wind | Lid |`,
-    '|---|---|---|---|---:|---|---|---:|---:|---|---:|---:|',
+    `| Date | Gate opens | Prediction provenance | Experiment phase | Call | Chance | Session outcome | Flow mechanism | Minutes ≥${REPORT_THRESHOLD_MPH} | Minutes ≥12 | Gust support | HRRR wind | Lid |`,
+    '|---|---|---|---|---|---:|---|---|---:|---:|---|---:|---:|',
     ...rows.map((row) => `| ${row} |`),
     '',
     '## How each field is calculated',

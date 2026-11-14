@@ -82,12 +82,12 @@ describe('report methodology', () => {
     const provenance = report.fields.find((field) => field.name === 'Prediction provenance');
     const phase = report.fields.find((field) => field.name === 'Experiment phase');
 
-    expect(provenance.calculation).toContain('collector mode');
+    expect(provenance.calculation).toContain('before the forecast date starts in Denver');
     expect(phase.calculation).toContain('independent of prediction provenance');
     expect(report.missingValues).toContain('literal unknown');
     expect(report.missingValues).toContain('absent is affirmative evidence');
     expect(COMPLETE_FORECAST_PAIR_SQL).toBe(
-      'h.lid_m IS NOT NULL AND h.wind_mph IS NOT NULL',
+      'h.lid_m IS NOT NULL AND h.wind_mph IS NOT NULL AND h.valid_hour_local BETWEEN 5 AND 8',
     );
   });
 });

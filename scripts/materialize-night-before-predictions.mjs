@@ -8,7 +8,15 @@
  */
 
 import { closePool, query } from './lib/db.mjs';
-import { persistNightBeforePrediction } from './lib/night-before-prediction-store.mjs';
+import {
+  EXPERIMENTAL_PROBABILITY_MODEL_V1,
+  EXPERIMENTAL_PROBABILITY_MODEL_V2,
+  summarizeGateAlignedForecastRows,
+} from './lib/night-before-call.mjs';
+import {
+  findNightBeforePrediction,
+  persistNightBeforePrediction,
+} from './lib/night-before-prediction-store.mjs';
 
 function arg(name) {
   const index = process.argv.indexOf(`--${name}`);
@@ -29,45 +37,130 @@ if (to) {
 }
 
 const { rows } = await query(
-  `SELECT
-     station_slug,
-     local_date::text AS local_date,
-     run_init,
-     avg(wind_mph) FILTER (
-       WHERE wind_mph IS NOT NULL AND lid_m IS NOT NULL
-     )::float8 AS avg_wind_mph,
-     avg(lid_m) FILTER (
-       WHERE wind_mph IS NOT NULL AND lid_m IS NOT NULL
-     )::float8 AS avg_lid_m,
-     count(*) FILTER (
-       WHERE wind_mph IS NOT NULL AND lid_m IS NOT NULL
-     )::int AS forecast_hours
-   FROM hrrr_forecasts
-   WHERE ${filters.join(' AND ')}
-   GROUP BY station_slug, local_date, run_init
-   ORDER BY local_date, run_init`,
+  `WITH selected_forecasts AS (
+     SELECT
+       station_slug,
+       local_date,
+       run_init,
+       valid_hour_local AS hr,
+       wind_mph AS wind,
+       lid_m AS lid
+     FROM hrrr_forecasts
+     WHERE ${filters.join(' AND ')}
+       AND run_init = (local_date::timestamp AT TIME ZONE 'UTC')
+   ),
+   legacy_summaries AS (
+     SELECT
+       station_slug,
+       local_date,
+       run_init,
+       avg(wind) FILTER (
+         WHERE hr BETWEEN 5 AND 8 AND wind IS NOT NULL AND lid IS NOT NULL
+       )::float8 AS legacy_avg_wind_mph,
+       avg(lid) FILTER (
+         WHERE hr BETWEEN 5 AND 8 AND wind IS NOT NULL AND lid IS NOT NULL
+       )::float8 AS legacy_avg_lid_m,
+       count(*) FILTER (
+         WHERE hr BETWEEN 5 AND 8 AND wind IS NOT NULL AND lid IS NOT NULL
+       )::int AS legacy_forecast_hours
+     FROM selected_forecasts
+     GROUP BY station_slug, local_date, run_init
+   )
+   SELECT
+     f.station_slug,
+     f.local_date::text AS local_date,
+     f.run_init,
+     f.hr,
+     f.wind,
+     f.lid,
+     s.legacy_avg_wind_mph,
+     s.legacy_avg_lid_m,
+     s.legacy_forecast_hours
+   FROM selected_forecasts f
+   JOIN legacy_summaries s USING (station_slug, local_date, run_init)
+   ORDER BY f.local_date, f.run_init, f.hr`,
   params,
 );
 
-let written = 0;
-let unscored = 0;
+const forecasts = new Map();
 for (const row of rows) {
-  const prediction = await persistNightBeforePrediction({
-    stationSlug: row.station_slug,
-    localDate: row.local_date,
-    runInit: new Date(row.run_init).toISOString(),
-    generationMode: 'retrospective',
-    forecast: {
-      avgWindMph: row.avg_wind_mph,
-      avgLidM: row.avg_lid_m,
-      forecastHours: row.forecast_hours,
-    },
+  const key = `${row.local_date}|${new Date(row.run_init).toISOString()}`;
+  if (!forecasts.has(key)) {
+    forecasts.set(key, {
+      stationSlug: row.station_slug,
+      localDate: row.local_date,
+      runInit: new Date(row.run_init).toISOString(),
+      legacyForecast: {
+        avgWindMph: row.legacy_avg_wind_mph,
+        avgLidM: row.legacy_avg_lid_m,
+        forecastHours: row.legacy_forecast_hours,
+      },
+      rows: [],
+    });
+  }
+  forecasts.get(key).rows.push(row);
+}
+
+let legacyWritten = 0;
+let candidateWritten = 0;
+let unscored = 0;
+for (const forecast of forecasts.values()) {
+  const legacyExisting = await findNightBeforePrediction({
+    stationSlug: forecast.stationSlug,
+    localDate: forecast.localDate,
+    runInit: forecast.runInit,
+    modelVersion: EXPERIMENTAL_PROBABILITY_MODEL_V1.modelVersion,
   });
-  if (prediction) written++;
-  else unscored++;
+  if (legacyExisting) {
+    legacyWritten++;
+  } else {
+    const legacy = await persistNightBeforePrediction({
+      stationSlug: forecast.stationSlug,
+      localDate: forecast.localDate,
+      runInit: forecast.runInit,
+      generationMode: 'retrospective',
+      forecast: forecast.legacyForecast,
+      model: EXPERIMENTAL_PROBABILITY_MODEL_V1,
+    });
+    if (legacy) legacyWritten++;
+    else unscored++;
+  }
+
+  const month = Number(forecast.localDate.slice(5, 7));
+  if (
+    month >= 3
+    && month <= 10
+    && forecast.localDate > EXPERIMENTAL_PROBABILITY_MODEL_V2.trainedThrough
+    && forecast.localDate <= '2026-10-31'
+  ) {
+    const candidateForecast = summarizeGateAlignedForecastRows(
+      forecast.rows,
+      forecast.localDate,
+    );
+    if (candidateForecast?.forecastHours >= 3) {
+      const candidateExisting = await findNightBeforePrediction({
+        stationSlug: forecast.stationSlug,
+        localDate: forecast.localDate,
+        runInit: forecast.runInit,
+        modelVersion: EXPERIMENTAL_PROBABILITY_MODEL_V2.modelVersion,
+      });
+      if (candidateExisting) {
+        candidateWritten++;
+      } else {
+        const candidate = await persistNightBeforePrediction({
+          ...forecast,
+          generationMode: 'retrospective',
+          forecast: candidateForecast,
+          model: EXPERIMENTAL_PROBABILITY_MODEL_V2,
+        });
+        if (candidate) candidateWritten++;
+      }
+    }
+  }
 }
 
 console.log(
-  `Materialized ${written} retrospective prediction(s); ${unscored} incomplete forecast(s) left unscored.`,
+  `Materialized ${legacyWritten} v1 prediction(s) and ${candidateWritten} ` +
+  `gate-aligned v2 holdout prediction(s); ${unscored} incomplete v1 forecast(s) left unscored.`,
 );
 await closePool();

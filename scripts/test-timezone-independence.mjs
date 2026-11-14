@@ -30,6 +30,7 @@ import {
   fmtStationTime,
 } from './lib/zone.mjs';
 import { gateOpenTime, gateOpenHour } from './lib/season.mjs';
+import { gateAlignedForecastWindow } from './lib/night-before-call.mjs';
 import { labelDay } from './lib/label.mjs';
 
 let failures = 0;
@@ -85,6 +86,9 @@ check('Aug gate instant', gateOpenTime(new Date(2026, 7, 2)).toISOString(), '202
 // December gate is 08:00 MST = 15:00 UTC
 check('Dec gate hour', gateOpenHour(new Date(2026, 11, 15)), 8);
 check('Dec gate instant', gateOpenTime(new Date(2026, 11, 15)).toISOString(), '2026-12-15T15:00:00.000Z');
+const octForecastWindow = gateAlignedForecastWindow('2026-10-15');
+check('Oct gate-aligned HRRR start hour', octForecastWindow?.startHour, 7);
+check('Oct gate-aligned HRRR end hour', octForecastWindow?.endHour, 10);
 
 console.log('\nThe label respects the gate regardless of machine zone:');
 // A synthetic morning blowing hard from 05:00-05:55 MT and dead afterwards. August gate is 06:00,

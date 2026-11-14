@@ -1,18 +1,46 @@
 import axios from 'axios';
 import { MIN_NIGHT_BEFORE_FORECAST_HOURS } from './night-before-call.mjs';
+import { zonedParts } from './zone.mjs';
 
 const API = 'https://single-runs-api.open-meteo.com/v1/forecast';
 const SITE = { lat: 39.646115, lon: -105.174958 };
-const WINDOW_HOURS = Object.freeze([5, 6, 7, 8]);
+export const HRRR_CAPTURE_HOURS = Object.freeze([5, 6, 7, 8, 9, 10, 11]);
+const WINDOW_HOURS = new Set(HRRR_CAPTURE_HOURS);
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function usablePair(row) {
+  return row.lid !== null && row.lid !== undefined && Number.isFinite(Number(row.lid))
+    && row.wind !== null && row.wind !== undefined && Number.isFinite(Number(row.wind));
+}
 
 function mergeRows(...groups) {
   const byHour = new Map();
   for (const rows of groups) {
-    for (const row of rows) byHour.set(row.hr, row);
+    for (const row of rows) {
+      const hr = Number(row.hr);
+      const previous = byHour.get(hr);
+      byHour.set(hr, {
+        hr,
+        lid: row.lid ?? previous?.lid ?? null,
+        wind: row.wind ?? previous?.wind ?? null,
+      });
+    }
   }
   return [...byHour.values()].sort((a, b) => a.hr - b.hr);
+}
+
+export function nightBeforeGenerationMode(date, requestedMode, now = new Date()) {
+  if (!['forward', 'retrospective', null].includes(requestedMode)) {
+    throw new Error('--mode must be "forward" or "retrospective"');
+  }
+  const { year, month, day } = zonedParts(now);
+  const today = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const canBeForward = date > today && now >= new Date(`${date}T00:00:00Z`);
+  if (requestedMode === 'forward' && !canBeForward) {
+    throw new Error(`Cannot mark ${date} forward: its run must exist and its local day must not have started.`);
+  }
+  return requestedMode || (canBeForward ? 'forward' : 'retrospective');
 }
 
 export function extractHrrrMorningRows(payload, date) {
@@ -28,15 +56,12 @@ export function extractHrrrMorningRows(payload, date) {
     const [rowDate, time] = hourly.time[index].split('T');
     if (rowDate !== date) continue;
     const hr = Number.parseInt(time?.slice(0, 2), 10);
-    if (!WINDOW_HOURS.includes(hr)) continue;
+    if (!WINDOW_HOURS.has(hr)) continue;
     const rawLid = hourly.boundary_layer_height[index];
     const rawWind = hourly.wind_speed_10m[index];
-    if (rawLid === null || rawLid === undefined || rawWind === null || rawWind === undefined) {
-      continue;
-    }
-    const lid = Number(rawLid);
-    const wind = Number(rawWind);
-    if (!Number.isFinite(lid) || !Number.isFinite(wind)) continue;
+    const lid = rawLid == null || !Number.isFinite(Number(rawLid)) ? null : Number(rawLid);
+    const wind = rawWind == null || !Number.isFinite(Number(rawWind)) ? null : Number(rawWind);
+    if (lid === null && wind === null) continue;
     rows.push({ hr, lid, wind });
   }
   return rows;
@@ -52,9 +77,11 @@ export async function fetchHrrrMorning(
     log = (message) => console.log(message),
     maxAttempts = 4,
     retryBaseMs = 30_000,
+    minimumUsableHours = MIN_NIGHT_BEFORE_FORECAST_HOURS,
   } = {},
 ) {
   const run = `${date}T00:00`;
+  let accumulatedRows = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -71,22 +98,28 @@ export async function fetchHrrrMorning(
         timeout: 60_000,
       });
       const rows = extractHrrrMorningRows(response.data, date);
-      const usableHours = mergeRows(existingRows, rows).length;
-      if (usableHours >= MIN_NIGHT_BEFORE_FORECAST_HOURS) {
-        return { status: 'ready', rows, attempts: attempt, usableHours };
+      accumulatedRows = mergeRows(rows, accumulatedRows);
+      const usableHours = mergeRows(accumulatedRows, existingRows).filter(usablePair).length;
+      if (usableHours >= minimumUsableHours) {
+        return { status: 'ready', rows: accumulatedRows, attempts: attempt, usableHours };
       }
 
       if (!waitForPublication || attempt === maxAttempts) {
         log(
-          `  ${date}: incomplete 00Z response (${usableHours}/4 usable hours) ` +
-          `after ${attempt} attempt(s) — nothing written`,
+          `  ${date}: incomplete 00Z response (${usableHours}/${HRRR_CAPTURE_HOURS.length} captured hours) ` +
+          `after ${attempt} attempt(s)`,
         );
-        return { status: 'incomplete', rows: null, attempts: attempt, usableHours };
+        return {
+          status: 'incomplete',
+          rows: accumulatedRows.length ? accumulatedRows : null,
+          attempts: attempt,
+          usableHours,
+        };
       }
 
       const wait = retryBaseMs * attempt;
       log(
-        `  ${date}: incomplete 00Z response (${usableHours}/4 usable hours), ` +
+        `  ${date}: incomplete 00Z response (${usableHours}/${HRRR_CAPTURE_HOURS.length} captured hours), ` +
         `attempt ${attempt}/${maxAttempts}; retrying in ${wait / 1000}s`,
       );
       await sleep(wait);
@@ -98,13 +131,13 @@ export async function fetchHrrrMorning(
       if (!retryable) {
         log(
           `  ${date}: ${unavailable ? 'run unavailable' : `request failed (${reason})`} ` +
-          `after ${attempt} attempt(s) — nothing written`,
+          `after ${attempt} attempt(s)`,
         );
         return {
           status: unavailable ? 'unavailable' : 'failed',
-          rows: null,
+          rows: accumulatedRows.length ? accumulatedRows : null,
           attempts: attempt,
-          usableHours: existingRows.length,
+          usableHours: mergeRows(accumulatedRows, existingRows).filter(usablePair).length,
         };
       }
 
@@ -128,36 +161,49 @@ export async function collectHrrrMorning({
   storeRows,
   persistRows,
   fetchMorning = fetchHrrrMorning,
+  minimumUsableHours = MIN_NIGHT_BEFORE_FORECAST_HOURS,
+  requiredCaptureHours = null,
 }) {
   const issued = await findIssuedPrediction();
-  if (issued) {
+  if (issued && !requiredCaptureHours) {
     return { status: 'already-issued', prediction: issued, rows: null };
   }
 
   let storedRows = await loadStoredRows();
+  const isComplete = (rows) => (
+    requiredCaptureHours
+      ? requiredCaptureHours.every(
+        (hour) => rows.some((row) => Number(row.hr) === hour && usablePair(row)),
+      )
+      : rows.filter(usablePair).length >= minimumUsableHours
+  );
+  if (issued && isComplete(storedRows)) {
+    return { status: 'already-issued', prediction: issued, rows: null };
+  }
   let source = 'stored';
-  if (storedRows.length < MIN_NIGHT_BEFORE_FORECAST_HOURS) {
+  if (!isComplete(storedRows)) {
     const fetched = await fetchMorning(date, {
       existingRows: storedRows,
       waitForPublication: generationMode === 'forward',
+      minimumUsableHours,
     });
-    if (!fetched.rows) {
-      return { status: 'unresolved', prediction: null, rows: null, fetch: fetched };
+    if (fetched.rows?.length) {
+      await storeRows(fetched.rows);
+      storedRows = await loadStoredRows();
+      source = 'upstream';
     }
-    await storeRows(fetched.rows);
-    storedRows = await loadStoredRows();
-    source = 'upstream';
   }
 
-  if (storedRows.length < MIN_NIGHT_BEFORE_FORECAST_HOURS) {
-    throw new Error(
-      `Stored HRRR forecast for ${date} has only ${storedRows.length} usable hour(s) after capture`,
-    );
-  }
-
-  const prediction = await persistRows(storedRows);
+  const prediction = issued || await persistRows(storedRows);
   if (!prediction) {
-    throw new Error(`Usable HRRR forecast for ${date} did not produce a prediction`);
+    return { status: 'unresolved', prediction: null, rows: storedRows, source };
   }
-  return { status: 'captured', prediction, rows: storedRows, source };
+  return {
+    status: isComplete(storedRows)
+      ? (issued && source === 'stored' ? 'already-issued' : 'captured')
+      : 'incomplete',
+    prediction,
+    rows: storedRows,
+    source,
+  };
 }

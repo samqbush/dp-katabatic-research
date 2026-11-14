@@ -3,13 +3,15 @@ import {
   collectHrrrMorning,
   extractHrrrMorningRows,
   fetchHrrrMorning,
+  HRRR_CAPTURE_HOURS,
+  nightBeforeGenerationMode,
 } from '@/scripts/lib/hrrr-forecast.mjs';
 import { MIN_NIGHT_BEFORE_FORECAST_HOURS } from '@/scripts/lib/night-before-call.mjs';
 
 const DATE = '2026-08-18';
 
 function response(values) {
-  const hours = [5, 6, 7, 8];
+  const hours = [5, 6, 7, 8, 9, 10, 11, 12];
   return {
     data: {
       hourly: {
@@ -28,18 +30,26 @@ function unavailable() {
 }
 
 describe('HRRR forecast publication handling', () => {
-  it('extracts only complete wind/lid pairs from the requested morning', () => {
+  it('extracts available fields without inventing missing wind or lid values', () => {
     const rows = extractHrrrMorningRows(response({
       5: { lid: 100, wind: 7 },
       6: { lid: 120, wind: null },
       7: { lid: 140, wind: 9 },
       8: { lid: 160, wind: 10 },
+      9: { lid: 180, wind: 11 },
+      10: { lid: 200, wind: 12 },
+      11: { lid: 220, wind: 13 },
+      12: { lid: 240, wind: 14 },
     }).data, DATE);
 
     expect(rows).toEqual([
       { hr: 5, lid: 100, wind: 7 },
+      { hr: 6, lid: 120, wind: null },
       { hr: 7, lid: 140, wind: 9 },
       { hr: 8, lid: 160, wind: 10 },
+      { hr: 9, lid: 180, wind: 11 },
+      { hr: 10, lid: 200, wind: 12 },
+      { hr: 11, lid: 220, wind: 13 },
     ]);
   });
 
@@ -55,6 +65,43 @@ describe('HRRR forecast publication handling', () => {
     expect(MIN_NIGHT_BEFORE_FORECAST_HOURS).toBe(3);
     expect(result.status).toBe('ready');
     expect(result.rows).toHaveLength(3);
+  });
+
+  it('retains available hours when an expanded capture is incomplete', async () => {
+    const request = jest.fn().mockResolvedValue(response({
+      5: { lid: 100, wind: 7 },
+      6: { lid: 120, wind: 8 },
+      7: { lid: 140, wind: 9 },
+      8: { lid: 160, wind: 10 },
+      9: { lid: 180, wind: 11 },
+      10: { lid: 200, wind: 12 },
+    }));
+
+    const result = await fetchHrrrMorning(DATE, {
+      request,
+      minimumUsableHours: 7,
+      log: jest.fn(),
+    });
+
+    expect(result).toMatchObject({ status: 'incomplete', usableHours: 6 });
+    expect(result.rows.map((row) => row.hr)).toEqual([5, 6, 7, 8, 9, 10]);
+  });
+
+  it('retains partial hours across retries even if the last request fails', async () => {
+    const request = jest.fn()
+      .mockResolvedValueOnce(response({ 5: { lid: 100, wind: 7 } }))
+      .mockRejectedValueOnce(new Error('network unavailable'));
+    const result = await fetchHrrrMorning(DATE, {
+      request,
+      sleep: jest.fn(),
+      log: jest.fn(),
+      waitForPublication: true,
+      maxAttempts: 2,
+      minimumUsableHours: 7,
+    });
+
+    expect(result).toMatchObject({ status: 'failed', usableHours: 1 });
+    expect(result.rows).toEqual([{ hr: 5, lid: 100, wind: 7 }]);
   });
 
   it('retries all-null forward responses before failing without rows', async () => {
@@ -127,6 +174,36 @@ describe('HRRR forecast publication handling', () => {
 
     expect(result.status).toBe('ready');
     expect(result.usableHours).toBe(3);
+  });
+
+  it('combines complementary stored and fetched fields when counting usable hours', async () => {
+    const request = jest.fn().mockResolvedValue(response({
+      5: { lid: 100, wind: null },
+      6: { lid: 120, wind: 8 },
+      7: { lid: 140, wind: 9 },
+    }));
+
+    const result = await fetchHrrrMorning(DATE, {
+      existingRows: [{ hr: 5, lid: null, wind: 6 }],
+      request,
+    });
+
+    expect(result.status).toBe('ready');
+    expect(result.usableHours).toBe(3);
+    expect(result.rows[0]).toEqual({ hr: 5, lid: 100, wind: null });
+  });
+});
+
+describe('forecast provenance', () => {
+  it('distinguishes actual pre-midnight issuance from historical single-date backfills', () => {
+    const now = new Date('2026-11-14T05:30:00Z');
+    expect(nightBeforeGenerationMode('2026-11-14', null, now)).toBe('forward');
+    expect(nightBeforeGenerationMode('2026-09-10', null, now)).toBe('retrospective');
+    expect(nightBeforeGenerationMode('2026-11-14', 'retrospective', now)).toBe('retrospective');
+    expect(() => nightBeforeGenerationMode('2026-09-10', 'forward', now)).toThrow();
+    expect(nightBeforeGenerationMode(
+      '2026-11-14', null, new Date('2026-11-14T07:00:00Z'),
+    )).toBe('retrospective');
   });
 });
 
@@ -221,5 +298,77 @@ describe('HRRR forecast recovery immutability', () => {
       { hr: 7, lid: 140, wind: 9 },
     ]);
     expect(persistRows).toHaveBeenCalledWith(result.rows);
+  });
+
+  it('issues v1 from a partial capture and repairs missing hours without reissuing v1', async () => {
+    const stored = new Map();
+    const firstRows = HRRR_CAPTURE_HOURS.slice(0, 6).map((hr) => ({ hr, lid: 100, wind: 8 }));
+    const prediction = { model_version: 'wind-lid-logistic-v1', call: 'MAYBE' };
+    const loadStoredRows = jest.fn(async () => [...stored.values()]);
+    const storeRows = jest.fn(async (rows) => rows.forEach((row) => stored.set(row.hr, row)));
+    const persistRows = jest.fn().mockResolvedValue(prediction);
+
+    const partial = await collectHrrrMorning({
+      date: DATE,
+      generationMode: 'forward',
+      findIssuedPrediction: jest.fn().mockResolvedValue(null),
+      loadStoredRows,
+      storeRows,
+      persistRows,
+      fetchMorning: jest.fn().mockResolvedValue({ status: 'incomplete', rows: firstRows }),
+      minimumUsableHours: 7,
+      requiredCaptureHours: HRRR_CAPTURE_HOURS,
+    });
+    expect(partial).toMatchObject({ status: 'incomplete', prediction });
+    expect(stored.size).toBe(6);
+    expect(persistRows).toHaveBeenCalledTimes(1);
+
+    const recovered = await collectHrrrMorning({
+      date: DATE,
+      generationMode: 'forward',
+      findIssuedPrediction: jest.fn().mockResolvedValue(prediction),
+      loadStoredRows,
+      storeRows,
+      persistRows,
+      fetchMorning: jest.fn().mockResolvedValue({
+        status: 'ready',
+        rows: [{ hr: 11, lid: 120, wind: 9 }],
+      }),
+      minimumUsableHours: 7,
+      requiredCaptureHours: HRRR_CAPTURE_HOURS,
+    });
+    expect(recovered).toMatchObject({ status: 'captured', prediction });
+    expect(stored.size).toBe(7);
+    expect(persistRows).toHaveBeenCalledTimes(1);
+  });
+
+  it('fills one missing stored field before scoring the forecast', async () => {
+    const stored = new Map(HRRR_CAPTURE_HOURS.map((hr) => [
+      hr, { hr, lid: hr === 5 ? null : 100, wind: 6 },
+    ]));
+    const result = await collectHrrrMorning({
+      date: DATE,
+      generationMode: 'forward',
+      findIssuedPrediction: jest.fn().mockResolvedValue(null),
+      loadStoredRows: async () => [...stored.values()],
+      storeRows: async (rows) => rows.forEach((row) => {
+        const old = stored.get(row.hr);
+        stored.set(row.hr, {
+          hr: row.hr,
+          lid: old.lid ?? row.lid,
+          wind: old.wind ?? row.wind,
+        });
+      }),
+      persistRows: async () => ({ model_version: 'wind-lid-logistic-v1' }),
+      fetchMorning: async () => ({
+        status: 'ready',
+        rows: [{ hr: 5, lid: 120, wind: null }],
+      }),
+      minimumUsableHours: 7,
+      requiredCaptureHours: HRRR_CAPTURE_HOURS,
+    });
+
+    expect(result.status).toBe('captured');
+    expect(stored.get(5)).toEqual({ hr: 5, lid: 120, wind: 6 });
   });
 });

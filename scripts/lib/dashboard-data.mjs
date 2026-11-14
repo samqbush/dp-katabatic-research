@@ -7,6 +7,7 @@ import {
     FORWARD_HOLDOUT_START,
 } from "./night-before-call.mjs";
 import { buildReportMethodology } from "./report-methodology.mjs";
+import { gateOpenHour } from "./season.mjs";
 import { zonedTimeFrom } from "./zone.mjs";
 import { SODA_NEIGHBOR_SLUGS, SODA_SLUG } from "./stations.mjs";
 
@@ -94,6 +95,7 @@ async function loadPredictionModel() {
             status,
             parameters
         FROM night_before_models
+        WHERE status NOT LIKE 'CANDIDATE%'
         ORDER BY created_at DESC, model_version DESC
         LIMIT 1
     `);
@@ -114,19 +116,11 @@ async function loadPredictionModel() {
 }
 
 export const COMPLETE_FORECAST_PAIR_SQL =
-    "h.lid_m IS NOT NULL AND h.wind_mph IS NOT NULL";
+    "h.lid_m IS NOT NULL AND h.wind_mph IS NOT NULL AND h.valid_hour_local BETWEEN 5 AND 8";
 
 async function loadForecasts(modelVersion, { from, to } = {}) {
     const { rows } = await query(`
-        WITH latest_runs AS (
-            SELECT local_date, max(run_init) AS run_init
-            FROM hrrr_forecasts
-            WHERE station_slug = $1
-              AND ($3::date IS NULL OR local_date >= $3)
-              AND ($4::date IS NULL OR local_date <= $4)
-            GROUP BY local_date
-        ),
-        forecast_summary AS (
+        WITH forecast_summary AS (
             SELECT
                 h.station_slug,
                 h.local_date,
@@ -143,10 +137,10 @@ async function loadForecasts(modelVersion, { from, to } = {}) {
                     WHERE ${COMPLETE_FORECAST_PAIR_SQL}
                 )::int AS forecast_hours
             FROM hrrr_forecasts h
-            JOIN latest_runs r
-              ON r.local_date = h.local_date
-             AND r.run_init = h.run_init
             WHERE h.station_slug = $1
+              AND h.run_init = (h.local_date::timestamp AT TIME ZONE 'UTC')
+              AND ($3::date IS NULL OR h.local_date >= $3)
+              AND ($4::date IS NULL OR h.local_date <= $4)
             GROUP BY h.station_slug, h.local_date, h.run_init
         )
         SELECT
@@ -276,7 +270,7 @@ function summarizeForecastOnly(forecast) {
         flowClass: null,
         flowReasons: [],
         flowEvidence: null,
-        gateOpenHour: null,
+        gateOpenHour: gateOpenHour(parseArchiveDate(forecast.date)),
         maxSpeedMph: null,
         maxGustMph: null,
         observedMorningMaxSpeedMph: null,

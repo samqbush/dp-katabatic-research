@@ -26,9 +26,10 @@ model that nobody has watched being right is not.
 As of 2026-09-19, one Cloudflare Cron Trigger dispatches two GitHub Actions **collection** jobs:
 
 1. At 9:00 and 9:15 p.m. Denver time, `collect-night-before-forecast.yml` stores the exact 00Z
-   HRRR run's raw 05:00–08:00 wind and boundary-layer-height values in Neon. It then writes an
-   immutable, versioned experimental call and success chance to `night_before_predictions`. It
-   does **not** run `/dp-katabatic-check`.
+   HRRR run's raw 05:00–11:00 wind and boundary-layer-height values in Neon. It writes the
+   immutable v1 prediction from the original 05:00–08:00 window and, in March–October, a separate
+   gate-aligned v2 shadow prediction. Neither changes prior predictions. It does **not** run
+   `/dp-katabatic-check`.
 2. At 2:15 p.m. Denver time the next afternoon, `archive-weather-observations.yml` stores the
    station observations, derives the rideable/not-rideable outcome, and attaches a verified
    database dump. Together they produce one forecast/outcome pair.
@@ -49,6 +50,24 @@ only on the 130 pre-2026-08-11 backfill outcomes, rounded to 5%, capped at 5–9
 with held-out outcomes. Calls materialized after outcomes already existed are marked
 `retrospective`; the nightly collector marks only genuinely pre-outcome rows `forward`. This
 percentage is easier to read than a bucket, but it is not yet calibrated or validated.
+
+On 2026-11-13 (America/Denver) the archive capture was extended through 11:00 and the missing
+09:00–11:00 pairs were backfilled for all 226 archived forecast dates (678 rows). The backfill
+fills only missing hours or null fields; it does not replace existing forecast values or
+predictions. The discussion report now shows each date's seasonal gate hour.
+
+The gate-aligned `wind-lid-gate-window-v2` is a shadow candidate, not the active model. Its feature
+window starts at that date's gate-open hour and ends at the last forecast hour no later than
+sunrise +180 minutes, requiring every hourly pair in that window. It was fit on the 130 labelable
+in-season mornings through 2026-08-10 (28
+rideable) and evaluated only on the 82 labelable forward-holdout mornings from 2026-08-11 through
+2026-10-31 (17 rideable). On that holdout, v2's Brier score was **0.160** and ROC-AUC **0.663**;
+v1's were **0.134** and **0.786**. The gate-aligned feature definition is now preserved as a
+versioned candidate, but it did **not** beat v1 and is not promoted. Future forecasts continue to
+record both versions during March–October so the candidate can be evaluated without rewriting v1.
+The v2 candidate was designed in November, after these holdout outcomes existed; its 82 v2
+predictions are retrospective, not a prospective test of this candidate. The comparison uses the
+stored v1 probabilities and the frozen v2 coefficients, not a newly refitted v2 model.
 
 **The canvas is not a source of truth.** It reads the raw forecasts, stored versioned predictions,
 and outcomes from Neon. It performs no model fitting and generates no call or percentage.

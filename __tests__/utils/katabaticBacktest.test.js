@@ -39,11 +39,14 @@ import { labelDay } from '@/scripts/lib/label.mjs';
 import {
   buildExperimentalNightBeforePrediction,
   EXPERIMENTAL_PROBABILITY_MODEL_V1,
+  EXPERIMENTAL_PROBABILITY_MODEL_V2,
   experimentalCallResult,
   experimentalNightBeforeCall,
   experimentalSuccessChance,
   fitExperimentalProbabilityModel,
   FORWARD_HOLDOUT_START,
+  gateAlignedForecastWindow,
+  summarizeGateAlignedForecastRows,
 } from '@/scripts/lib/night-before-call.mjs';
 import { summarizeForecastRows } from '@/scripts/lib/night-before-prediction-store.mjs';
 import { classifyEmptyDay, gateOpenHour } from '@/scripts/lib/season.mjs';
@@ -297,6 +300,61 @@ describe('experimental night-before call', () => {
       avgLidM: 200,
       forecastHours: 3,
     });
+  });
+});
+
+describe('gate-aligned HRRR features', () => {
+  const rows = Array.from({ length: 7 }, (_, index) => ({
+    hr: index + 5,
+    wind: index + 5,
+    lid: (index + 5) * 100,
+  }));
+
+  it('uses the October 7 a.m. gate and only forecasts inside the physical morning window', () => {
+    expect(gateAlignedForecastWindow('2026-10-15')).toEqual({
+      startHour: 7,
+      endHour: 10,
+    });
+    expect(summarizeGateAlignedForecastRows(rows, '2026-10-15')).toEqual({
+      avgWindMph: 8.5,
+      avgLidM: 850,
+      forecastHours: 4,
+      windowStartHour: 7,
+      windowEndHour: 10,
+    });
+  });
+
+  it('excludes pre-gate hours for the 6 a.m. summer gate', () => {
+    expect(summarizeGateAlignedForecastRows(rows, '2026-05-15')).toEqual({
+      avgWindMph: 7,
+      avgLidM: 700,
+      forecastHours: 3,
+      windowStartHour: 6,
+      windowEndHour: 8,
+    });
+  });
+
+  it('does not score an incomplete or duplicated gate-aligned window', () => {
+    expect(summarizeGateAlignedForecastRows(
+      rows.filter((row) => row.hr !== 10), '2026-10-15',
+    )).toBeNull();
+    expect(summarizeGateAlignedForecastRows(
+      [...rows, rows.find((row) => row.hr === 9)], '2026-10-15',
+    )).toBeNull();
+  });
+
+  it('keeps the gate-aligned candidate distinct from the original frozen model', () => {
+    expect(EXPERIMENTAL_PROBABILITY_MODEL_V2.modelVersion).not.toBe(
+      EXPERIMENTAL_PROBABILITY_MODEL_V1.modelVersion,
+    );
+    expect(EXPERIMENTAL_PROBABILITY_MODEL_V2.status).toContain('not promoted');
+    expect(buildExperimentalNightBeforePrediction({
+      avgWindMph: 9.6,
+      avgLidM: 87.5,
+      forecastHours: 4,
+    }, EXPERIMENTAL_PROBABILITY_MODEL_V2).modelVersion).toBe(
+      EXPERIMENTAL_PROBABILITY_MODEL_V2.modelVersion,
+    );
   });
 });
 

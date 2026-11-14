@@ -152,6 +152,21 @@ the wind rows already preserved. The pressure backfill is resumable, skips compl
 must not run concurrently with another Ecowitt archive job because both share the research
 account's request-rate budget.
 
+The night-before HRRR archive is separate from station observations. It now stores 05:00–11:00
+forecast pairs; to fill the added 09:00–11:00 hours on already archived forecast dates, run:
+
+```bash
+npm run archive:forecast:backfill-hours -- --from 2026-04-02 --to 2026-11-14
+```
+
+The collector preserves usable partial forecasts and any issued v1 prediction, but fails visibly
+when the seven-hour capture is incomplete so the recovery run can fill the missing hours. A
+gate-aligned v2 prediction requires every hour in its window; past-date captures are retrospective.
+
+This only inserts missing hours or fills null fields. It never replaces existing non-null forecasts
+or issued predictions. Check the final coverage count; any incomplete dates must be investigated
+before treating the backfill as complete.
+
 ## When to run it
 
 **Daily is the target cadence**, driven by the Holfuy window rather than by Ecowitt — and the

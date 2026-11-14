@@ -44,6 +44,7 @@ function fixture() {
     }],
     recent: [{
       date: '2026-08-18',
+      gateOpenHour: 6,
       forecastCall: 'PACK',
       successChancePercent: 65,
       label: null,
@@ -66,6 +67,7 @@ function fixture() {
       hasForecast: true,
     }, {
       date: '2026-08-10',
+      gateOpenHour: 6,
       forecastCall: 'SLEEP IN',
       successChancePercent: 10,
       label: true,
@@ -103,9 +105,9 @@ describe('GitHub Discussion report', () => {
     expect(report).toContain('Research display only — not a go/no-go recommendation');
     expect(report).toContain('UNSAFE: research \\| display only.');
     expect(report).toContain('Prediction provenance: **forward** · Experiment phase: **held-out**');
-    expect(report).toContain(`| Date | Prediction provenance | Experiment phase | Call | Chance | Session outcome | Flow mechanism | Minutes ≥${REPORT_THRESHOLD_MPH} | Minutes ≥12 | Gust support | HRRR wind | Lid |`);
-    expect(report).toContain('| 2026-08-18 | forward | held-out | PACK | 65% |');
-    expect(report).toContain('| 2026-08-10 | retrospective | backfill | SLEEP IN | 10% |');
+    expect(report).toContain(`| Date | Gate opens | Prediction provenance | Experiment phase | Call | Chance | Session outcome | Flow mechanism | Minutes ≥${REPORT_THRESHOLD_MPH} | Minutes ≥12 | Gust support | HRRR wind | Lid |`);
+    expect(report).toContain('| 2026-08-18 | 6:00 a.m. | forward | held-out | PACK | 65% |');
+    expect(report).toContain('| 2026-08-10 | 6:00 a.m. | retrospective | backfill | SLEEP IN | 10% |');
     expect(report).toContain('gust-driven/canoe');
     expect(report).toContain('transition-hybrid');
     expect(report).toContain('20 min');
@@ -124,6 +126,7 @@ describe('GitHub Discussion report', () => {
     expect(report).toContain('## How each field is calculated');
     for (const field of [
       'Date',
+      'Gate opens',
       'Prediction provenance',
       'Experiment phase',
       'Call',
